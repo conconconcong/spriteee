@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f5f7" />
+    <meta name="description" content="SPRITEEE 是一款在浏览器本地完成视频编辑、AI 抠像与单行精灵图交付的工具。" />
+    <title>SPRITEEE — 视频编辑与精灵图工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main>
+      <section class="hero unified-hero" aria-labelledby="page-title">
+        <div class="hero-copy"><h1 id="page-title" aria-label="SPRITEEE"><span>SPRIT</span><span class="pixel-eee" aria-hidden="true">EEE</span></h1><p>在一个画布里完成视频编辑、精灵图抠像与单行横排交付。</p></div>
+        <div class="workflow-note" aria-label="工作流程"><span>01 编辑视频</span><i>→</i><span>02 精灵图抠像</span><i>→</i><span>03 导出</span></div>
+      </section>
+
+      <section id="videoEditor" class="editor-workspace unified-workspace">
+        <div class="editor-main unified-preview-panel">
+          <div class="section-heading editor-heading">
+            <div><h2>画面预览</h2><span id="materialState" class="section-state">等待素材</span></div>
+            <div class="editor-file-actions"><span id="editorFileMeta" class="section-state">等待素材</span><button id="editorReplaceBtn" class="text-btn" type="button" hidden>更换视频</button></div>
+          </div>
+
+          <div class="preview-toolbar">
+            <div class="preview-mode-switch" role="group" aria-label="预览内容"><button id="previewVideoBtn" class="active" type="button">视频画面</button><button id="previewSpriteBtn" type="button" disabled>精灵图结果</button></div>
+            <div class="preview-toolbar-meta"><span class="crop-interaction-hint">拖动选框定位 · 拖四角改变大小</span><span id="previewScale" class="preview-scale">VIDEO PREVIEW</span></div>
+          </div>
+
+          <input id="editorFileInput" type="file" accept="video/*" hidden />
+          <input id="secondaryFileInput" type="file" accept="video/*,image/*" hidden />
+          <input id="fileInput" type="file" accept="video/*" hidden />
+          <video id="editorVideo" muted playsinline preload="auto" hidden></video>
+          <video id="secondaryVideo" muted playsinline loop preload="auto" hidden></video>
+          <video id="sourceVideo" muted playsinline preload="metadata" hidden></video>
+          <img id="secondaryImage" alt="第二画面素材" hidden />
+
+          <div id="previewViewport" class="editor-stage">
+            <canvas id="editorCanvas" width="960" height="540"></canvas>
+            <canvas id="spriteCanvas" hidden></canvas>
+            <div id="cropGuide" class="crop-guide" hidden aria-label="可拖动裁剪选框"><i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="se"></i><i data-handle="sw"></i></div>
+            <div id="precisionLoupe" class="precision-loupe" hidden aria-hidden="true"><div><canvas id="precisionLoupeCanvas" width="132" height="132"></canvas><i></i></div><span id="precisionLoupeLabel">RGB —</span></div>
+            <div id="editorEmpty" class="editor-empty"><span class="editor-empty-icon" aria-hidden="true"></span><strong>添加视频开始制作</strong><p>视频编辑和精灵图生成共用这一份素材</p><button id="editorUploadBtn" class="primary-pill" type="button">选择视频</button></div>
+            <div id="aiPreviewBadge" class="ai-preview-badge" hidden><i></i><span>精灵图 AI 抠像已开启</span></div>
+            <div id="processingOverlay" class="processing-overlay" hidden><span id="processingPercent">0%</span><div><i id="processingBar"></i></div><p id="processingText">正在读取画面</p></div>
+          </div>
+
+          <div class="editor-playback"><button id="editorPlayBtn" class="play-button" type="button" aria-label="播放或暂停" disabled><i></i></button><span id="editorCurrentTime">00:00.0</span><input id="editorScrubber" type="range" min="0" max="10" step="0.01" value="0" disabled /><span id="editorTotalTime">00:00.0</span><button id="editorFitBtn" class="icon-text-button" type="button" disabled>适合画布</button></div>
+
+          <div class="editor-timeline">
+            <div class="timeline-header"><strong>片段时间线</strong><span id="editorClipInfo">完整视频</span></div>
+            <div class="editor-filmstrip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><span id="editorTrimSelection"></span></div>
+            <div class="editor-trim-wrap"><input id="editorTrimStart" aria-label="视频片段开始时间" type="range" min="0" max="10" step="0.1" value="0" disabled /><input id="editorTrimEnd" aria-label="视频片段结束时间" type="range" min="0" max="10" step="0.1" value="10" disabled /></div>
+            <div class="editor-trim-labels"><span id="editorTrimStartLabel">00:00.0</span><span id="editorTrimEndLabel">00:00.0</span></div>
+          </div>
+
+          <div class="delivery-summary unified-summary"><div><span>精灵图尺寸</span><strong id="canvasDimensions">— × —</strong></div><div><span>总帧数</span><strong id="summaryFrames">12 FRAMES</strong></div><div><span>片段时长</span><strong id="summaryClip">完整视频</strong></div><div><span>预计大小</span><strong id="summarySize">≈ 420 KB</strong></div></div>
+        </div>
+
+        <aside class="editor-inspector unified-inspector" aria-label="视频与精灵图设置">
+          <div class="panel-heading unified-panel-heading"><div><h2>制作设置</h2><span>从上到下完成</span></div><button id="editorResetBtn" class="reset-btn" type="button">重置视频</button></div>
+          <div class="workflow-group-heading"><span>01</span><div><strong>视频编辑</strong><small>所有调整实时显示在左侧画布</small></div></div>
+
+          <section class="inspector-section first-section">
+            <div class="inspector-title"><strong>画面裁剪</strong><span id="cropRatioLabel">自由框选</span></div>
+            <div class="chip-grid crop-presets" role="group" aria-label="画面比例"><button type="button" data-ratio="source">原始</button><button type="button" data-ratio="16:9">16:9</button><button type="button" data-ratio="9:16">9:16</button><button type="button" data-ratio="1:1">1:1</button><button type="button" data-ratio="4:5">4:5</button><button class="active" type="button" data-ratio="free">自由</button></div>
+            <div class="editor-range-row is-disabled"><label for="cropZoom">裁剪缩放</label><input id="cropZoom" class="range" type="range" min="100" max="400" value="100" disabled /><output id="cropZoomValue">拖拽</output></div>
+            <div class="editor-range-row"><label for="cropX">水平位置</label><input id="cropX" class="range" type="range" min="0" max="100" value="50" /><output id="cropXValue">50</output></div>
+            <div class="editor-range-row"><label for="cropY">垂直位置</label><input id="cropY" class="range" type="range" min="0" max="100" value="50" /><output id="cropYValue">50</output></div>
+            <p id="cropModeHint" class="editor-hint crop-mode-hint">自由模式：四个角可分别拖动，宽高互不锁定</p>
+          </section>
+
+          <section class="inspector-section">
+            <div class="inspector-title"><strong>画面组合</strong><button id="secondaryUploadBtn" class="mini-action" type="button">添加第二画面</button></div>
+            <div class="layout-grid" role="group" aria-label="画面组合方式"><button class="active" type="button" data-layout="single"><i class="layout-single"></i><span>单画面</span></button><button type="button" data-layout="pip"><i class="layout-pip"></i><span>画中画</span></button><button type="button" data-layout="split"><i class="layout-split"></i><span>左右</span></button><button type="button" data-layout="stack"><i class="layout-stack"></i><span>上下</span></button></div>
+            <p id="secondaryStatus" class="editor-hint">添加图片或视频后可进行多画面组合</p>
+          </section>
+
+          <section class="inspector-section">
+            <div class="inspector-title"><strong>速度与方向</strong><span id="speedStatus">1×</span></div>
+            <div class="speed-grid" role="group" aria-label="播放速度"><button type="button" data-speed="0.5">0.5×</button><button class="active" type="button" data-speed="1">1×</button><button type="button" data-speed="1.5">1.5×</button><button type="button" data-speed="2">2×</button></div>
+            <label class="setting-row reverse-row"><span><strong>倒放</strong><small>从片段终点向前播放</small></span><span class="switch"><input id="reverseToggle" type="checkbox" /><span></span></span></label>
+          </section>
+
+          <section class="inspector-section compact-video-export">
+            <div class="inspector-title"><strong>视频导出</strong><span>不包含抠像</span></div>
+            <div class="export-fields"><label><span>分辨率</span><select id="editorResolution"><option value="720">720p</option><option value="1080">1080p</option><option value="540">540p</option></select></label><label><span>帧率</span><select id="editorFps"><option value="24">24 FPS</option><option value="30" selected>30 FPS</option><option value="60">60 FPS</option></select></label></div>
+            <button id="editorExportBtn" class="secondary-export-btn" type="button" disabled><span>导出编辑视频</span><i>→</i></button>
+            <div id="editorExportProgress" class="export-progress" hidden><i></i><span>正在准备导出</span></div>
+            <p class="editor-hint">导出 WebM；倒放与画面组合暂不保留原音频。</p>
+          </section>
+
+          <div class="workflow-group-heading sprite-group-heading"><span>02</span><div><strong>精灵图生成</strong><small>抠像只应用于精灵图，不改变视频</small></div></div>
+
+          <section class="inspector-section first-section matting-section sprite-matting-section">
+            <div class="inspector-title"><span><strong>AI 精灵图抠像</strong><b class="pro-badge">HAIR</b></span><label class="switch"><input id="mattingToggle" type="checkbox" /><span></span></label></div>
+            <div id="mattingControls" class="matting-controls off">
+              <div class="model-card"><span class="model-orb" aria-hidden="true"></span><div><strong>双模型毛发精修</strong><small id="modelStatus">首次使用需下载本地模型</small></div></div>
+              <div class="editor-range-row"><label for="hairDetail">毛发细节</label><input id="hairDetail" class="range" type="range" min="0" max="100" value="78" /><output id="hairDetailValue">78</output></div>
+              <div class="editor-range-row"><label for="edgeFeather">边缘柔化</label><input id="edgeFeather" class="range" type="range" min="0" max="100" value="32" /><output id="edgeFeatherValue">32</output></div>
+              <div class="editor-range-row"><label for="despill">边缘净色</label><input id="despill" class="range" type="range" min="0" max="100" value="68" /><output id="despillValue">68</output></div>
+              <div class="spill-detection"><i id="spillColorIndicator" aria-hidden="true"></i><span id="spillColorLabel">自动检测背景主色</span><div><button id="spillAutoBtn" class="active" type="button">自动</button><button id="spillPickBtn" type="button">主色取样</button><button id="spillAddBtn" type="button">＋ 加选</button></div></div>
+              <div class="mask-refine">
+                <div class="mask-refine-heading"><span><strong>遮罩修补</strong><small id="maskRefineStatus">直接在左侧画面涂抹</small></span><button id="maskClearBtn" type="button" disabled>清除</button></div>
+                <div class="mask-refine-actions" role="group" aria-label="遮罩修补方式"><button id="maskAddBtn" type="button"><i>＋</i>加选主体</button><button id="maskSubtractBtn" type="button"><i>−</i>减去背景</button></div>
+                <label class="mask-brush-size" for="maskBrushSize"><span>画笔大小</span><input id="maskBrushSize" class="range" type="range" min="1" max="15" value="4" /><output id="maskBrushSizeValue">4</output></label>
+              </div>
+              <div class="transparency-lock"><span class="transparency-swatch" aria-hidden="true"></span><div><strong>透明背景 PNG</strong><small>背景将写入 Alpha 通道，不会填充颜色</small></div><b>自动</b></div>
+            </div>
+            <p class="editor-hint">仍有蓝边时点“画面取色”，再点击左侧纯蓝背景，可精确锁定色键并重建毛发边缘。</p>
+          </section>
+
+          <section class="control-section sprite-control-section">
+            <div class="control-title"><div><span>A</span><strong>取帧方式</strong></div><small>单行横排</small></div>
+            <div class="segmented" role="group" aria-label="取帧方式"><button class="segment active" type="button" data-mode="count">按总帧数</button><button class="segment" type="button" data-mode="fps">按帧率</button></div>
+            <div id="countControl" class="range-control"><div class="range-value-row"><label for="frameCount">总帧数</label><div><input id="frameCountNumber" type="number" min="2" max="48" value="12" /><span>帧</span></div></div><input id="frameCount" class="range" type="range" min="2" max="48" value="12" /><div class="range-marks"><span>2</span><span>24</span><span>48</span></div></div>
+            <div id="fpsControl" class="range-control" hidden><div class="range-value-row"><label for="fps">采样帧率</label><div><input id="fpsNumber" type="number" min="0.5" max="24" step="0.5" value="2" /><span>FPS</span></div></div><input id="fps" class="range" type="range" min="0.5" max="24" step="0.5" value="2" /><div class="range-marks"><span>0.5</span><span>12</span><span>24</span></div></div>
+          </section>
+
+          <section class="control-section sprite-control-section">
+            <div class="control-title"><div><span>B</span><strong>单帧尺寸</strong></div><small>输出尺寸</small></div>
+            <div class="size-grid" role="group" aria-label="单帧宽度"><button type="button" data-width="375"><b>S</b><span>375 px</span></button><button class="active" type="button" data-width="750"><b>M</b><span>750 px</span></button><button type="button" data-width="1125"><b>L</b><span>1125 px</span></button><button type="button" data-width="1500"><b>XL</b><span>1500 px</span></button></div>
+            <div class="dimension-editor"><label><span>宽度</span><div><input id="frameWidthInput" type="number" min="16" max="4096" value="750" /><b>px</b></div></label><button id="aspectLock" class="aspect-lock active" type="button" aria-pressed="true" title="锁定编辑画面比例"><i aria-hidden="true"></i><span>比例锁定</span></button><label><span>高度</span><div><input id="frameHeightInput" type="number" min="16" max="4096" value="422" /><b>px</b></div></label></div>
+            <p id="dimensionHint" class="field-hint">已按编辑画面比例锁定宽高</p>
+          </section>
+
+          <section class="control-section format-section sprite-control-section">
+            <div class="control-title"><div><span>C</span><strong>导出格式</strong></div><small>先生成原图</small></div>
+            <div class="export-format-fields"><label class="select-field"><span>格式</span><select id="formatSelect"><option value="image/webp">WebP</option><option value="image/jpeg">JPG</option><option value="image/png">PNG</option></select></label></div>
+            <p id="compressionHint" class="field-hint">先按完整尺寸生成，再选择是否精准压缩</p>
+          </section>
+
+          <div class="spec-strip"><span>输出规格</span><strong id="outputSpec">9000 × AUTO / WEBP</strong></div>
+          <button id="generateBtn" class="generate-btn" type="button" disabled><span id="generateLabel">请先上传视频</span><i aria-hidden="true">→</i></button>
+          <section id="postCompression" class="post-compression" aria-label="生成后精准压缩">
+            <div class="post-compression-heading"><span class="compression-orb" aria-hidden="true"></span><div><strong>精准压缩</strong><small id="precisionCompressionStatus">生成精灵图后可用 · 不改变尺寸</small></div></div>
+            <div id="compressionLevelControl" class="quality-control post-quality"><div><span>压缩程度</span><strong id="compressionLevelValue">35% · 均衡</strong></div><input id="compressionLevel" class="range" type="range" min="10" max="100" value="35" aria-describedby="compressionLevelHint" /><p id="compressionLevelHint" class="compression-level-hint">越高文件越小，建议使用 25%–55%</p></div>
+            <button id="precisionCompressBtn" class="precision-compress-btn" type="button" disabled><span>开始压缩</span><i aria-hidden="true">↓</i></button>
+          </section>
+          <button id="downloadBtn" class="download-btn" type="button" hidden><span>下载精灵图</span><small id="downloadMeta">WEBP · —</small></button>
+          <button id="resetBtn" class="reset-btn sprite-reset-btn" type="button">重置精灵图参数</button>
+          <p class="privacy-note"><i>✓</i> 视频与模型计算均在当前浏览器中完成</p>
+        </aside>
+      </section>
+
+      <div class="integration-plumbing" hidden aria-hidden="true">
+        <div id="spriteTool"></div><div id="dropzone"><button id="browseBtn" type="button"></button></div>
+        <div id="fileCard"><span id="fileName"></span><span id="fileMeta"></span><button id="replaceBtn" type="button"></button></div>
+        <div id="emptyPreview"></div><div id="spriteSyncBar"><span id="spriteSyncSummary"></span><button id="backToEditorBtn" type="button"></button></div>
+        <span id="timelineStartLabel"></span><span id="durationLabel"></span>
+        <div id="trimSection"><span id="clipDurationLabel"></span><input id="trimStartInput" /><input id="trimEndInput" /><div id="trimRangeWrap"><input id="trimStartRange" /><input id="trimEndRange" /></div><span id="trimStartLabel"></span><span id="trimEndLabel"></span></div>
+        <span id="editorSyncStatus"></span><button id="syncSpriteBtn" type="button"></button>
+      </div>
+    </main>
+
+    <footer><span>SPRITEEE · VIDEO TO SPRITE</span><span>一个画布，一条完整工作流</span></footer>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script><script src="./editor.js"></script>
+  </body>
+</html>
