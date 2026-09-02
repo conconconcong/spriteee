@@ -540,23 +540,7 @@ footer { width: min(1220px, calc(100% - 48px)); min-height: 68px; display: flex;
 
 /* Unified studio */
 .unified-hero { min-height: 64px; margin-bottom: 12px; align-items: center; }
-.unified-hero .hero-copy { display: flex; align-items: center; gap: 14px; }
-.brand-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-.brand-logo img {
-  display: block;
-  width: 34px;
-  height: 34px;
-  filter: drop-shadow(0 4px 10px rgba(99, 102, 241, 0.35));
-  transition: transform 0.25s cubic-bezier(.22, 1, .36, 1);
-}
-.brand-logo img:hover {
-  transform: scale(1.15) rotate(-6deg);
-}
+.unified-hero .hero-copy { display: flex; align-items: center; gap: 17px; }
 .unified-hero h1 { display: flex; align-items: baseline; flex: 0 0 auto; font-size: clamp(32px,3.1vw,42px); line-height: .92; letter-spacing: -.055em; }
 .unified-hero .pixel-eee { display: inline-block; margin-left: .02em; padding-right: .08em; color: transparent; background-color: var(--blue); background-image: linear-gradient(90deg,transparent 74%,rgba(255,255,255,.3) 74%),linear-gradient(transparent 74%,rgba(255,255,255,.24) 74%); background-size: 5px 5px; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-family: "SFMono-Regular",Menlo,Consolas,monospace; font-style: italic; font-weight: 900; letter-spacing: -.16em; transform: skewX(-8deg); transform-origin: center bottom; }
 .unified-hero p { max-width: 330px; margin: 1px 0 0; font-size: 9px; }
