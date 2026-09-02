@@ -93,6 +93,7 @@ const state = {
   outputCompressed: false,
   compressionAttempted: false,
   compressionSavings: 0,
+  wideExportSource: null,
   isCompressing: false,
   isProcessing: false,
   editorSynced: false,
@@ -168,7 +169,8 @@ function frameHeight() {
 function estimateBytes() {
   const pixels = selectedFrameCount() * state.frameWidth * frameHeight();
   const lossyMultiplier = 0.72 - state.compressionLevel / 100 * 0.44;
-  const multiplier = state.format === "image/png" ? 1.35 : lossyMultiplier;
+  const isWideDelivery = selectedFrameCount() * state.frameWidth > 32000;
+  const multiplier = state.format === "image/png" || isWideDelivery ? 1.35 : lossyMultiplier;
   return pixels * multiplier;
 }
 
@@ -211,6 +213,7 @@ function markDirty() {
   state.outputCompressed = false;
   state.compressionAttempted = false;
   state.compressionSavings = 0;
+  state.wideExportSource = null;
   els.downloadBtn.hidden = true;
   els.generateLabel.textContent = "生成原始精灵图";
   els.materialState.textContent = state.editorSynced ? "编辑已同步" : "参数已更改";
@@ -226,6 +229,8 @@ function updateUI({ dirty = false } = {}) {
   const height = frameHeight();
   const width = frames * state.frameWidth;
   const extension = typeExtensions[state.format].toUpperCase();
+  const isWideDelivery = width > 32000;
+  const deliveryExtension = isWideDelivery ? "PNG" : extension;
   const trimEnd = state.trimEnd ?? state.duration;
   const maxTrim = Math.max(0.1, state.duration || 10);
 
@@ -278,10 +283,12 @@ function updateUI({ dirty = false } = {}) {
   els.summaryClip.textContent = state.file ? `${clipDuration().toFixed(1)} 秒` : "完整视频";
   els.summarySize.textContent = state.outputBlob ? formatBytes(state.outputBlob.size) : `≈ ${formatBytes(estimateBytes())}`;
   if (state.outputBlob) syncOutputFileUI();
-  els.outputSpec.textContent = `${width} × ${state.file ? height : "AUTO"} / ${extension}`;
+  els.outputSpec.textContent = `${width} × ${state.file ? height : "AUTO"} / ${deliveryExtension}`;
   els.countControl.hidden = state.mode !== "count";
   els.fpsControl.hidden = state.mode !== "fps";
-  els.compressionHint.textContent = state.transparentPNG
+  els.compressionHint.textContent = isWideDelivery && state.format !== "image/png"
+    ? "超宽交付会自动使用 PNG；预览缩小，下载保持完整宽度"
+    : state.transparentPNG
     ? "透明 PNG 会先按完整像素生成，压缩时不缩图、不减色"
     : isLosslessPNG
       ? "PNG 先按完整像素生成，再进行无损优化"
@@ -351,6 +358,7 @@ async function loadVideoFile(file, { fromEditor = false, silent = false } = {}) 
   state.outputCompressed = false;
   state.compressionAttempted = false;
   state.compressionSavings = 0;
+  state.wideExportSource = null;
 
   try {
     const metadataReady = new Promise((resolve, reject) => {
@@ -615,6 +623,151 @@ async function encodeLosslessPNG(source, compressionLevel = 35) {
   return new Blob([png], { type: "image/png" });
 }
 
+function crc32Parts(parts) {
+  if (!pngCrcTable) crc32(new Uint8Array());
+  let crc = 0xffffffff;
+  for (const bytes of parts) {
+    for (const byte of bytes) crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunkBlobParts(type, data) {
+  const typeBytes = new TextEncoder().encode(type);
+  const prefix = new Uint8Array(8);
+  const prefixView = new DataView(prefix.buffer);
+  prefixView.setUint32(0, data.length);
+  prefix.set(typeBytes, 4);
+  const checksum = new Uint8Array(4);
+  new DataView(checksum.buffer).setUint32(0, crc32Parts([typeBytes, data]));
+  return [prefix, data, checksum];
+}
+
+function createRGBApngBlob(width, height, compressedData) {
+  const header = new Uint8Array(13);
+  const headerView = new DataView(header.buffer);
+  headerView.setUint32(0, width);
+  headerView.setUint32(4, height);
+  header[8] = 8;
+  header[9] = 6;
+  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  return new Blob([
+    signature,
+    ...pngChunkBlobParts("IHDR", header),
+    ...pngChunkBlobParts("IDAT", compressedData),
+    ...pngChunkBlobParts("IEND", new Uint8Array()),
+  ], { type: "image/png" });
+}
+
+async function storeRGBAFrame(canvas) {
+  const context = canvas.getContext("2d", { alpha: true, willReadFrequently: true });
+  const image = context.getImageData(0, 0, canvas.width, canvas.height);
+  const bytes = new Uint8Array(image.data);
+  if (typeof CompressionStream === "undefined" || typeof DecompressionStream === "undefined") {
+    return { blob: new Blob([bytes]), compressed: false };
+  }
+  const compressed = await new Response(
+    new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate")),
+  ).blob();
+  return { blob: compressed, compressed: true };
+}
+
+function createExactByteReader(stream) {
+  const reader = stream.getReader();
+  let chunk = new Uint8Array();
+  let chunkOffset = 0;
+  return async function readExact(size) {
+    const output = new Uint8Array(size);
+    let outputOffset = 0;
+    while (outputOffset < size) {
+      if (chunkOffset >= chunk.length) {
+        const result = await reader.read();
+        if (result.done) throw new Error("超宽精灵图帧数据不完整");
+        chunk = result.value;
+        chunkOffset = 0;
+      }
+      const length = Math.min(size - outputOffset, chunk.length - chunkOffset);
+      output.set(chunk.subarray(chunkOffset, chunkOffset + length), outputOffset);
+      chunkOffset += length;
+      outputOffset += length;
+    }
+    return output;
+  };
+}
+
+function filterWidePNGRow(row, previousRow, compressionLevel) {
+  const filterTypes = compressionLevel <= 30
+    ? [0, 1]
+    : compressionLevel <= 65
+      ? [0, 1, 2, 3]
+      : [0, 1, 2, 3, 4];
+  const output = new Uint8Array(row.length + 1);
+  const candidate = new Uint8Array(row.length);
+  let bestScore = Infinity;
+  for (const filterType of filterTypes) {
+    let score = 0;
+    for (let index = 0; index < row.length; index += 1) {
+      const value = row[index];
+      const left = index >= 4 ? row[index - 4] : 0;
+      const up = previousRow ? previousRow[index] : 0;
+      const upperLeft = previousRow && index >= 4 ? previousRow[index - 4] : 0;
+      let filteredValue = value;
+      if (filterType === 1) filteredValue = value - left;
+      else if (filterType === 2) filteredValue = value - up;
+      else if (filterType === 3) filteredValue = value - Math.floor((left + up) / 2);
+      else if (filterType === 4) filteredValue = value - paethPredictor(left, up, upperLeft);
+      filteredValue &= 255;
+      candidate[index] = filteredValue;
+      score += filteredValue < 128 ? filteredValue : 256 - filteredValue;
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      output[0] = filterType;
+      output.set(candidate, 1);
+    }
+  }
+  return output;
+}
+
+async function encodeWidePNGFromFrames(source, compressionLevel = 35) {
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("当前浏览器不支持超宽 PNG 流式编码，请使用最新版 Chrome、Edge 或 Safari");
+  }
+  const frameRowBytes = source.frameWidth * 4;
+  const totalWidth = source.frameWidth * source.frames.length;
+  const readers = source.frames.map((frame) => {
+    const stream = frame.compressed
+      ? frame.blob.stream().pipeThrough(new DecompressionStream("deflate"))
+      : frame.blob.stream();
+    return createExactByteReader(stream);
+  });
+  let rowIndex = 0;
+  let previousRow = null;
+  const rows = new ReadableStream({
+    async pull(controller) {
+      try {
+        if (rowIndex >= source.height) {
+          controller.close();
+          return;
+        }
+        const row = new Uint8Array(totalWidth * 4);
+        for (let frameIndex = 0; frameIndex < readers.length; frameIndex += 1) {
+          row.set(await readers[frameIndex](frameRowBytes), frameIndex * frameRowBytes);
+        }
+        controller.enqueue(filterWidePNGRow(row, previousRow, compressionLevel));
+        previousRow = row;
+        rowIndex += 1;
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+  const compressedBuffer = await new Response(
+    rows.pipeThrough(new CompressionStream("deflate")),
+  ).arrayBuffer();
+  return createRGBApngBlob(totalWidth, source.height, new Uint8Array(compressedBuffer));
+}
+
 function buildPalette(imageData, maxColors) {
   const colorsByKey = new Map();
   const pixels = imageData.data;
@@ -787,15 +940,19 @@ async function generateSprite() {
   const width = state.frameWidth;
   const height = frameHeight();
   const maxCanvasWidth = 32000;
-  if (frameCount * width > maxCanvasWidth) {
-    toast(`${frameCount} 帧 × ${width}px 超出浏览器单图宽度，请减少帧数或单帧尺寸`);
-    return;
+  const exportWidth = frameCount * width;
+  const isWideExport = exportWidth > maxCanvasWidth;
+  const forcedPNG = isWideExport && state.format !== "image/png";
+  if (forcedPNG) {
+    state.format = "image/png";
+    els.formatSelect.value = state.format;
   }
   state.rawOutputBlob = null;
   state.outputBlob = null;
   state.outputCompressed = false;
   state.compressionAttempted = false;
   state.compressionSavings = 0;
+  state.wideExportSource = null;
   state.isProcessing = true;
   els.generateBtn.disabled = true;
   els.precisionCompressBtn.disabled = true;
@@ -807,8 +964,10 @@ async function generateSprite() {
   els.materialState.textContent = "处理中";
 
   const canvas = els.spriteCanvas;
-  canvas.width = width * frameCount;
-  canvas.height = height;
+  const previewFrameWidth = isWideExport ? Math.max(1, Math.floor(maxCanvasWidth / frameCount)) : width;
+  const previewFrameHeight = isWideExport ? Math.max(1, Math.round(height * previewFrameWidth / width)) : height;
+  canvas.width = previewFrameWidth * frameCount;
+  canvas.height = previewFrameHeight;
   const context = canvas.getContext("2d", { alpha: true });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
@@ -817,6 +976,15 @@ async function generateSprite() {
     context.fillRect(0, 0, canvas.width, canvas.height);
   } else {
     context.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  const frameCanvas = isWideExport ? document.createElement("canvas") : null;
+  const frameContext = frameCanvas?.getContext("2d", { alpha: true, willReadFrequently: true }) || null;
+  const wideFrames = [];
+  if (frameCanvas) {
+    frameCanvas.width = width;
+    frameCanvas.height = height;
+    frameContext.imageSmoothingEnabled = true;
+    frameContext.imageSmoothingQuality = "high";
   }
 
   try {
@@ -830,7 +998,20 @@ async function generateSprite() {
     const usableDuration = Math.max(0, clipEnd - clipStart);
     for (let index = 0; index < frameCount; index += 1) {
       const time = frameCount === 1 ? clipStart : clipStart + (usableDuration * index) / (frameCount - 1);
-      if (bridge) {
+      if (isWideExport) {
+        frameContext.clearRect(0, 0, width, height);
+        if (bridge) {
+          const frame = await bridge.renderAtOutputTime(time, width, height);
+          frameContext.drawImage(frame, 0, 0, width, height);
+          if (typeof frame.close === "function") frame.close();
+        } else {
+          await seekVideo(time);
+          frameContext.drawImage(els.sourceVideo, 0, 0, width, height);
+        }
+        context.drawImage(frameCanvas, index * previewFrameWidth, 0, previewFrameWidth, previewFrameHeight);
+        els.processingText.textContent = `正在保存第 ${index + 1} / ${frameCount} 帧原始像素`;
+        wideFrames.push(await storeRGBAFrame(frameCanvas));
+      } else if (bridge) {
         const frame = await bridge.renderAtOutputTime(time, width, height);
         context.drawImage(frame, index * width, 0, width, height);
         if (typeof frame.close === "function") frame.close();
@@ -847,15 +1028,22 @@ async function generateSprite() {
 
     els.processingPercent.textContent = "92%";
     els.processingBar.style.width = "92%";
-    els.processingText.textContent = state.format === "image/png"
+    els.processingText.textContent = isWideExport
+      ? `正在流式拼接 ${exportWidth}px 超宽 PNG`
+      : state.format === "image/png"
       ? "正在封装原始透明 PNG"
       : "正在封装最高画质原图";
-    const originalBlob = await canvasToBlob(canvas, state.format, state.format === "image/png" ? undefined : 1);
+    if (isWideExport) {
+      state.wideExportSource = { frames: wideFrames, frameWidth: width, height };
+    }
+    const originalBlob = isWideExport
+      ? await encodeWidePNGFromFrames(state.wideExportSource, 10)
+      : await canvasToBlob(canvas, state.format, state.format === "image/png" ? undefined : 1);
 
     state.rawOutputBlob = originalBlob;
     state.outputBlob = originalBlob;
-    state.outputWidth = canvas.width;
-    state.outputHeight = canvas.height;
+    state.outputWidth = exportWidth;
+    state.outputHeight = height;
     state.outputCompressed = false;
     state.compressionAttempted = false;
     state.compressionSavings = 0;
@@ -866,18 +1054,22 @@ async function generateSprite() {
 
     els.emptyPreview.hidden = true;
     canvas.hidden = false;
-    els.previewScale.textContent = canvas.width > els.previewViewport.clientWidth ? "FIT HEIGHT · 可横向滚动" : "1 : 1";
-    els.canvasDimensions.textContent = `${canvas.width} × ${canvas.height}`;
+    els.previewScale.textContent = isWideExport
+      ? `缩略预览 · 原图 ${exportWidth}px`
+      : canvas.width > els.previewViewport.clientWidth ? "FIT HEIGHT · 可横向滚动" : "1 : 1";
+    els.canvasDimensions.textContent = `${exportWidth} × ${height}`;
     els.summaryFrames.textContent = `${frameCount} FRAMES`;
-    els.outputSpec.textContent = `${canvas.width} × ${canvas.height} / ${typeExtensions[state.format].toUpperCase()}`;
+    els.outputSpec.textContent = `${exportWidth} × ${height} / ${typeExtensions[state.format].toUpperCase()}`;
     syncOutputFileUI();
     els.downloadBtn.hidden = false;
     els.generateLabel.textContent = "重新生成原图";
     els.materialState.textContent = "可交付";
     window.dispatchEvent(new CustomEvent("spriteeee:sprite-ready", {
-      detail: { label: `${canvas.width} × ${canvas.height} · ${typeExtensions[state.format].toUpperCase()}` },
+      detail: { label: `${exportWidth} × ${height} · ${typeExtensions[state.format].toUpperCase()}` },
     }));
-    toast(`原始精灵图已生成 · ${formatBytes(originalBlob.size)}`);
+    toast(isWideExport
+      ? `${forcedPNG ? "已自动切换 PNG · " : ""}${exportWidth}px 超宽精灵图生成完成`
+      : `原始精灵图已生成 · ${formatBytes(originalBlob.size)}`);
   } catch (error) {
     console.error(error);
     els.materialState.textContent = "生成失败";
@@ -898,7 +1090,9 @@ async function preciseCompressOutput() {
 
   try {
     const source = els.spriteCanvas;
-    const candidate = state.format === "image/png"
+    const candidate = state.wideExportSource
+      ? await encodeWidePNGFromFrames(state.wideExportSource, state.compressionLevel)
+      : state.format === "image/png"
       ? await encodeLosslessPNG(source, state.compressionLevel)
       : await canvasToBlob(source, state.format, outputQuality());
     const original = state.rawOutputBlob;
