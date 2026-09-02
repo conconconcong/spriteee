@@ -126,7 +126,7 @@
 
           <section class="control-section format-section sprite-control-section">
             <div class="control-title"><div><span>C</span><strong>导出格式</strong></div><small>先生成原图</small></div>
-            <div class="export-format-fields"><label class="select-field"><span>格式</span><select id="formatSelect"><option value="image/webp">WebP</option><option value="image/jpeg">JPG</option><option value="image/png">PNG</option></select></label></div>
+            <div class="export-format-fields"><label class="select-field"><span>格式</span><select id="formatSelect"><option value="image/webp">WebP · 清晰且小</option><option value="image/jpeg">JPG · 体积最小</option><option value="image/png">PNG · 透明无损</option></select></label></div>
             <p id="compressionHint" class="field-hint">先按完整尺寸生成，再选择是否精准压缩</p>
           </section>
 
@@ -134,7 +134,7 @@
           <button id="generateBtn" class="generate-btn" type="button" disabled><span id="generateLabel">请先上传视频</span><i aria-hidden="true">→</i></button>
           <section id="postCompression" class="post-compression" aria-label="生成后精准压缩">
             <div class="post-compression-heading"><span class="compression-orb" aria-hidden="true"></span><div><strong>精准压缩</strong><small id="precisionCompressionStatus">生成精灵图后可用 · 不改变尺寸</small></div></div>
-            <div id="compressionLevelControl" class="quality-control post-quality"><div><span>压缩程度</span><strong id="compressionLevelValue">35% · 均衡</strong></div><input id="compressionLevel" class="range" type="range" min="10" max="100" value="35" aria-describedby="compressionLevelHint" /><p id="compressionLevelHint" class="compression-level-hint">越高文件越小，建议使用 25%–55%</p></div>
+            <div id="compressionLevelControl" class="quality-control post-quality"><div><span>压缩程度</span><strong id="compressionLevelValue">35% · 均衡</strong></div><input id="compressionLevel" class="range" type="range" min="10" max="100" value="35" aria-describedby="compressionLevelHint" /><p id="compressionLevelHint" class="compression-level-hint">JPG / WebP 向右可强力压缩；PNG 保持无损</p></div>
             <button id="precisionCompressBtn" class="precision-compress-btn" type="button" disabled><span>开始压缩</span><i aria-hidden="true">↓</i></button>
           </section>
           <button id="downloadBtn" class="download-btn" type="button" hidden><span>下载精灵图</span><small id="downloadMeta">WEBP · —</small></button>
@@ -155,6 +155,6 @@
 
     <footer><span>SPRITEEE · VIDEO TO SPRITE</span><span>一个画布，一条完整工作流</span></footer>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js"></script><script src="./editor.js"></script>
+    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260902"></script><script src="./editor.js"></script>
   </body>
 </html>

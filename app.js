@@ -105,6 +105,9 @@ const typeExtensions = {
   "image/png": "png",
 };
 
+const MAX_CANVAS_WIDTH = 32000;
+const MAX_JPEG_DIMENSION = 65535;
+
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -168,9 +171,13 @@ function frameHeight() {
 
 function estimateBytes() {
   const pixels = selectedFrameCount() * state.frameWidth * frameHeight();
-  const lossyMultiplier = 0.72 - state.compressionLevel / 100 * 0.44;
-  const isWideDelivery = selectedFrameCount() * state.frameWidth > 32000;
-  const multiplier = state.format === "image/png" || isWideDelivery ? 1.35 : lossyMultiplier;
+  const deliveryFormat = resolvedDeliveryFormat(
+    state.format,
+    selectedFrameCount() * state.frameWidth,
+    frameHeight(),
+  );
+  const lossyMultiplier = 0.7 - state.compressionLevel / 100 * 0.58;
+  const multiplier = deliveryFormat === "image/png" ? 1.35 : Math.max(0.1, lossyMultiplier);
   return pixels * multiplier;
 }
 
@@ -181,7 +188,15 @@ function compressionLevelLabel() {
 }
 
 function outputQuality() {
-  return clamp(1 - state.compressionLevel / 100 * 0.5, 0.5, 0.95);
+  const normalized = clamp((state.compressionLevel - 10) / 90, 0, 1);
+  return clamp(0.95 - normalized * 0.89, 0.06, 0.95);
+}
+
+function resolvedDeliveryFormat(format, width, height) {
+  if (state.transparentPNG || format === "image/png") return "image/png";
+  if (width <= MAX_CANVAS_WIDTH) return format;
+  if (width <= MAX_JPEG_DIMENSION && height <= MAX_JPEG_DIMENSION) return "image/jpeg";
+  return "image/png";
 }
 
 function syncOutputFileUI({ pulse = false } = {}) {
@@ -229,8 +244,9 @@ function updateUI({ dirty = false } = {}) {
   const height = frameHeight();
   const width = frames * state.frameWidth;
   const extension = typeExtensions[state.format].toUpperCase();
-  const isWideDelivery = width > 32000;
-  const deliveryExtension = isWideDelivery ? "PNG" : extension;
+  const isWideDelivery = width > MAX_CANVAS_WIDTH;
+  const deliveryFormat = resolvedDeliveryFormat(state.format, width, height);
+  const deliveryExtension = typeExtensions[deliveryFormat].toUpperCase();
   const trimEnd = state.trimEnd ?? state.duration;
   const maxTrim = Math.max(0.1, state.duration || 10);
 
@@ -245,8 +261,8 @@ function updateUI({ dirty = false } = {}) {
   const isLosslessPNG = state.format === "image/png";
   els.compressionLevel.disabled = state.isCompressing;
   els.compressionLevelHint.textContent = isLosslessPNG
-    ? "无损优化强度，画面、尺寸与透明度不会改变"
-    : "越高文件越小，建议使用 25%–55%";
+    ? "PNG 只能无损优化，画面不变，但体积降幅通常有限"
+    : `实际编码画质约 ${Math.round(outputQuality() * 100)}%，滑到右侧可显著减小体积`;
   els.frameWidthInput.value = state.frameWidth;
   els.frameHeightInput.value = height;
   els.aspectLock.classList.toggle("active", state.aspectLocked);
@@ -286,13 +302,17 @@ function updateUI({ dirty = false } = {}) {
   els.outputSpec.textContent = `${width} × ${state.file ? height : "AUTO"} / ${deliveryExtension}`;
   els.countControl.hidden = state.mode !== "count";
   els.fpsControl.hidden = state.mode !== "fps";
-  els.compressionHint.textContent = isWideDelivery && state.format !== "image/png"
-    ? "超宽交付会自动使用 PNG；预览缩小，下载保持完整宽度"
-    : state.transparentPNG
-    ? "透明 PNG 会先按完整像素生成，压缩时不缩图、不减色"
-    : isLosslessPNG
-      ? "PNG 先按完整像素生成，再进行无损优化"
-      : "先按最高画质生成，再按下方保真度精准压缩";
+  els.compressionHint.textContent = state.transparentPNG
+    ? "抠像需要透明通道，只能使用 PNG；JPG 不支持透明背景"
+    : isWideDelivery && deliveryFormat === "image/jpeg" && state.format === "image/webp"
+      ? "超宽 WebP 将自动改用 JPG；完整宽度不变，压缩效果更明显"
+      : isWideDelivery && deliveryFormat === "image/png" && state.format !== "image/png"
+        ? "总宽超过 JPG 的 65535px 上限，将使用 PNG 完整交付"
+        : isLosslessPNG
+          ? "PNG 无损且支持透明；追求更小体积可改用 JPG 或 WebP"
+          : state.format === "image/jpeg"
+            ? "JPG 体积更小，但不支持透明背景"
+            : "WebP 通常兼顾清晰度与小体积";
 
   const hasOutput = Boolean(state.rawOutputBlob);
   els.postCompression.classList.toggle("ready", hasOutput && !state.compressionAttempted);
@@ -768,6 +788,60 @@ async function encodeWidePNGFromFrames(source, compressionLevel = 35) {
   return createRGBApngBlob(totalWidth, source.height, new Uint8Array(compressedBuffer));
 }
 
+async function readStoredFrame(frame) {
+  const stream = frame.compressed
+    ? frame.blob.stream().pipeThrough(new DecompressionStream("deflate"))
+    : frame.blob.stream();
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function createWideJPEGImage(source) {
+  const width = source.frameWidth * source.frames.length;
+  const height = source.height;
+  if (width > MAX_JPEG_DIMENSION || height > MAX_JPEG_DIMENSION) {
+    throw new Error(`JPG 单边最长支持 ${MAX_JPEG_DIMENSION}px，请改用 PNG 完整导出`);
+  }
+  const byteLength = width * height * 4;
+  if (!Number.isSafeInteger(byteLength)) throw new Error("精灵图像素数据过大，请改用 PNG 导出");
+  let data;
+  try {
+    data = new Uint8Array(byteLength);
+  } catch (error) {
+    throw new Error("JPG 编码所需内存不足，请减少单帧高度或改用 PNG");
+  }
+  const frameRowBytes = source.frameWidth * 4;
+  for (let frameIndex = 0; frameIndex < source.frames.length; frameIndex += 1) {
+    const frame = await readStoredFrame(source.frames[frameIndex]);
+    for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
+      const sourceOffset = rowIndex * frameRowBytes;
+      const destinationOffset = (rowIndex * width + frameIndex * source.frameWidth) * 4;
+      const row = frame.subarray(sourceOffset, sourceOffset + frameRowBytes);
+      data.set(row, destinationOffset);
+      for (let pixelOffset = 0; pixelOffset < frameRowBytes; pixelOffset += 4) {
+        const alpha = row[pixelOffset + 3];
+        if (alpha === 255) continue;
+        const opacity = alpha / 255;
+        const target = destinationOffset + pixelOffset;
+        data[target] = Math.round(row[pixelOffset] * opacity + 255 * (1 - opacity));
+        data[target + 1] = Math.round(row[pixelOffset + 1] * opacity + 255 * (1 - opacity));
+        data[target + 2] = Math.round(row[pixelOffset + 2] * opacity + 255 * (1 - opacity));
+        data[target + 3] = 255;
+      }
+    }
+    await new Promise(requestAnimationFrame);
+  }
+  return { data, width, height };
+}
+
+async function encodeWideJPEGFromFrames(source, quality = 1) {
+  const encode = globalThis["jpeg-js"]?.encode;
+  if (!encode) throw new Error("JPG 编码器加载失败，请刷新页面后重试");
+  const image = await createWideJPEGImage(source);
+  await new Promise(requestAnimationFrame);
+  const result = encode(image, Math.round(clamp(quality, 0.01, 1) * 100));
+  return new Blob([result.data], { type: "image/jpeg" });
+}
+
 function buildPalette(imageData, maxColors) {
   const colorsByKey = new Map();
   const pixels = imageData.data;
@@ -939,12 +1013,13 @@ async function generateSprite() {
   const frameCount = selectedFrameCount();
   const width = state.frameWidth;
   const height = frameHeight();
-  const maxCanvasWidth = 32000;
   const exportWidth = frameCount * width;
-  const isWideExport = exportWidth > maxCanvasWidth;
-  const forcedPNG = isWideExport && state.format !== "image/png";
-  if (forcedPNG) {
-    state.format = "image/png";
+  const isWideExport = exportWidth > MAX_CANVAS_WIDTH;
+  const requestedFormat = state.format;
+  const deliveryFormat = resolvedDeliveryFormat(requestedFormat, exportWidth, height);
+  const automaticFormatChange = deliveryFormat !== requestedFormat;
+  if (automaticFormatChange) {
+    state.format = deliveryFormat;
     els.formatSelect.value = state.format;
   }
   state.rawOutputBlob = null;
@@ -964,7 +1039,7 @@ async function generateSprite() {
   els.materialState.textContent = "处理中";
 
   const canvas = els.spriteCanvas;
-  const previewFrameWidth = isWideExport ? Math.max(1, Math.floor(maxCanvasWidth / frameCount)) : width;
+  const previewFrameWidth = isWideExport ? Math.max(1, Math.floor(MAX_CANVAS_WIDTH / frameCount)) : width;
   const previewFrameHeight = isWideExport ? Math.max(1, Math.round(height * previewFrameWidth / width)) : height;
   canvas.width = previewFrameWidth * frameCount;
   canvas.height = previewFrameHeight;
@@ -999,7 +1074,12 @@ async function generateSprite() {
     for (let index = 0; index < frameCount; index += 1) {
       const time = frameCount === 1 ? clipStart : clipStart + (usableDuration * index) / (frameCount - 1);
       if (isWideExport) {
-        frameContext.clearRect(0, 0, width, height);
+        if (state.format === "image/jpeg") {
+          frameContext.fillStyle = "#ffffff";
+          frameContext.fillRect(0, 0, width, height);
+        } else {
+          frameContext.clearRect(0, 0, width, height);
+        }
         if (bridge) {
           const frame = await bridge.renderAtOutputTime(time, width, height);
           frameContext.drawImage(frame, 0, 0, width, height);
@@ -1029,7 +1109,7 @@ async function generateSprite() {
     els.processingPercent.textContent = "92%";
     els.processingBar.style.width = "92%";
     els.processingText.textContent = isWideExport
-      ? `正在流式拼接 ${exportWidth}px 超宽 PNG`
+      ? `正在编码 ${exportWidth}px 超宽 ${typeExtensions[state.format].toUpperCase()}`
       : state.format === "image/png"
       ? "正在封装原始透明 PNG"
       : "正在封装最高画质原图";
@@ -1037,7 +1117,9 @@ async function generateSprite() {
       state.wideExportSource = { frames: wideFrames, frameWidth: width, height };
     }
     const originalBlob = isWideExport
-      ? await encodeWidePNGFromFrames(state.wideExportSource, 10)
+      ? state.format === "image/jpeg"
+        ? await encodeWideJPEGFromFrames(state.wideExportSource, 1)
+        : await encodeWidePNGFromFrames(state.wideExportSource, 10)
       : await canvasToBlob(canvas, state.format, state.format === "image/png" ? undefined : 1);
 
     state.rawOutputBlob = originalBlob;
@@ -1068,7 +1150,7 @@ async function generateSprite() {
       detail: { label: `${exportWidth} × ${height} · ${typeExtensions[state.format].toUpperCase()}` },
     }));
     toast(isWideExport
-      ? `${forcedPNG ? "已自动切换 PNG · " : ""}${exportWidth}px 超宽精灵图生成完成`
+      ? `${automaticFormatChange ? `已自动切换 ${typeExtensions[state.format].toUpperCase()} · ` : ""}${exportWidth}px 超宽精灵图生成完成`
       : `原始精灵图已生成 · ${formatBytes(originalBlob.size)}`);
   } catch (error) {
     console.error(error);
@@ -1091,7 +1173,9 @@ async function preciseCompressOutput() {
   try {
     const source = els.spriteCanvas;
     const candidate = state.wideExportSource
-      ? await encodeWidePNGFromFrames(state.wideExportSource, state.compressionLevel)
+      ? state.format === "image/jpeg"
+        ? await encodeWideJPEGFromFrames(state.wideExportSource, outputQuality())
+        : await encodeWidePNGFromFrames(state.wideExportSource, state.compressionLevel)
       : state.format === "image/png"
       ? await encodeLosslessPNG(source, state.compressionLevel)
       : await canvasToBlob(source, state.format, outputQuality());
