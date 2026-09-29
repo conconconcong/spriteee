@@ -411,22 +411,47 @@
     };
   }
 
+  function fittedSourceRect(media, targetAspect, applyPrimaryCrop = false) {
+    const sourceWidth = media.videoWidth || media.naturalWidth || media.width || 1;
+    const sourceHeight = media.videoHeight || media.naturalHeight || media.height || 1;
+    if (applyPrimaryCrop) return sourceCropRect(media, targetAspect);
+    const sourceAspect = sourceWidth / sourceHeight;
+    let sw = sourceWidth;
+    let sh = sourceHeight;
+    if (sourceAspect > targetAspect) sw = sourceHeight * targetAspect;
+    else sh = sourceWidth / targetAspect;
+    return { sx: (sourceWidth - sw) / 2, sy: (sourceHeight - sh) / 2, sw, sh };
+  }
+
+  function mapSourceRegionToCanvas(region, media, rect, crop) {
+    if (!region || !media || !crop?.sw || !crop?.sh) return null;
+    const sourceWidth = media.videoWidth || media.naturalWidth || media.width || 1;
+    const sourceHeight = media.videoHeight || media.naturalHeight || media.height || 1;
+    const sourceLeft = region.left * sourceWidth;
+    const sourceTop = region.top * sourceHeight;
+    const sourceRight = (region.left + region.width) * sourceWidth;
+    const sourceBottom = (region.top + region.height) * sourceHeight;
+    const cropRight = crop.sx + crop.sw;
+    const cropBottom = crop.sy + crop.sh;
+    const clippedLeft = Math.max(sourceLeft, crop.sx);
+    const clippedTop = Math.max(sourceTop, crop.sy);
+    const clippedRight = Math.min(sourceRight, cropRight);
+    const clippedBottom = Math.min(sourceBottom, cropBottom);
+    if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null;
+    return {
+      left: rect.x + (clippedLeft - crop.sx) / crop.sw * rect.width,
+      top: rect.y + (clippedTop - crop.sy) / crop.sh * rect.height,
+      width: (clippedRight - clippedLeft) / crop.sw * rect.width,
+      height: (clippedBottom - clippedTop) / crop.sh * rect.height,
+    };
+  }
+
   function drawMedia(ctx, media, rect, applyPrimaryCrop = false) {
     if (!media) return;
     const sourceWidth = media.videoWidth || media.naturalWidth || media.width;
     const sourceHeight = media.videoHeight || media.naturalHeight || media.height;
     if (!sourceWidth || !sourceHeight) return;
-    const crop = applyPrimaryCrop
-      ? sourceCropRect(media, rect.width / rect.height)
-      : (() => {
-          const targetAspect = rect.width / rect.height;
-          const sourceAspect = sourceWidth / sourceHeight;
-          let sw = sourceWidth;
-          let sh = sourceHeight;
-          if (sourceAspect > targetAspect) sw = sourceHeight * targetAspect;
-          else sh = sourceWidth / targetAspect;
-          return { sx: (sourceWidth - sw) / 2, sy: (sourceHeight - sh) / 2, sw, sh };
-        })();
+    const crop = fittedSourceRect(media, rect.width / rect.height, applyPrimaryCrop);
     ctx.drawImage(media, crop.sx, crop.sy, crop.sw, crop.sh, rect.x, rect.y, rect.width, rect.height);
   }
 
@@ -506,9 +531,9 @@
     return "洋红色";
   }
 
-  function applyDespill(canvas) {
+  function applyDespill(canvas, region) {
     const spill = state.spillColor;
-    if (!state.localKeying || state.despill <= 0 || !spill || !state.spillRegion) return;
+    if (!state.localKeying || state.despill <= 0 || !spill || !region) return;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = image.data;
@@ -535,14 +560,12 @@
 
     const width = canvas.width;
     const height = canvas.height;
-    const region = state.spillColorLocked ? state.spillRegion : null;
-    const regionLeft = region ? Math.floor(region.left * width) : 0;
-    const regionTop = region ? Math.floor(region.top * height) : 0;
-    const regionRight = region ? Math.ceil((region.left + region.width) * width) : width;
-    const regionBottom = region ? Math.ceil((region.top + region.height) * height) : height;
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        if (region && (x < regionLeft || x >= regionRight || y < regionTop || y >= regionBottom)) continue;
+    const regionLeft = clamp(Math.floor(region.left), 0, width);
+    const regionTop = clamp(Math.floor(region.top), 0, height);
+    const regionRight = clamp(Math.ceil(region.left + region.width), 0, width);
+    const regionBottom = clamp(Math.ceil(region.top + region.height), 0, height);
+    for (let y = regionTop; y < regionBottom; y += 1) {
+      for (let x = regionLeft; x < regionRight; x += 1) {
         const index = (y * width + x) * 4;
         const alpha = data[index + 3];
         if (alpha < 5) continue;
@@ -640,6 +663,7 @@
     }
     const layerContext = layerCanvas.getContext("2d", { willReadFrequently: true });
     layerContext.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+    let localKeyRegion = null;
     if (useAIMatting) {
       drawBackground(ctx, rect);
       const subject = prepareSubject();
@@ -651,10 +675,13 @@
         ? sourceCropRect(subject, rect.width / rect.height)
         : { sx: 0, sy: 0, sw: subject.width, sh: subject.height };
       layerContext.drawImage(subject, crop.sx, crop.sy, crop.sw, crop.sh, rect.x, rect.y, rect.width, rect.height);
+      localKeyRegion = mapSourceRegionToCanvas(state.spillRegion, subject, rect, crop);
     } else {
+      const crop = fittedSourceRect(el.video, rect.width / rect.height, applyPrimaryCrop);
       drawMedia(layerContext, el.video, rect, applyPrimaryCrop);
+      localKeyRegion = mapSourceRegionToCanvas(state.spillRegion, el.video, rect, crop);
     }
-    if (useLocalKeying) applyDespill(layerCanvas);
+    if (useLocalKeying) applyDespill(layerCanvas, localKeyRegion);
     ctx.drawImage(layerCanvas, 0, 0);
   }
 
@@ -1392,8 +1419,6 @@
       sourceY,
       normalizedX: clamp(sourceX / sourceWidth, 0, 1),
       normalizedY: clamp(sourceY / sourceHeight, 0, 1),
-      canvasNormalizedX: clamp(canvasX / el.canvas.width, 0, 1),
-      canvasNormalizedY: clamp(canvasY / el.canvas.height, 0, 1),
     };
   }
 
@@ -1402,12 +1427,27 @@
     const show = Boolean(region && state.localKeying && state.file && state.previewMode === "video");
     el.spillRegionGuide.hidden = !show;
     if (!show) return;
+    const previewRect = primaryPreviewRect();
+    const aiPreview = state.matting && state.combinedMask;
+    const media = aiPreview && maskFrameCanvas.width ? maskFrameCanvas : el.video;
+    const sourceWidth = media.videoWidth || media.naturalWidth || media.width || 1;
+    const sourceHeight = media.videoHeight || media.naturalHeight || media.height || 1;
+    const crop = aiPreview
+      ? { sx: 0, sy: 0, sw: sourceWidth, sh: sourceHeight }
+      : fittedSourceRect(media, previewRect.width / previewRect.height, false);
+    const mapped = mapSourceRegionToCanvas(region, media, previewRect, crop);
+    if (!mapped) {
+      el.spillRegionGuide.hidden = true;
+      return;
+    }
     const canvasBounds = el.canvas.getBoundingClientRect();
     const stageBounds = el.stage.getBoundingClientRect();
-    el.spillRegionGuide.style.left = `${canvasBounds.left - stageBounds.left + region.left * canvasBounds.width}px`;
-    el.spillRegionGuide.style.top = `${canvasBounds.top - stageBounds.top + region.top * canvasBounds.height}px`;
-    el.spillRegionGuide.style.width = `${region.width * canvasBounds.width}px`;
-    el.spillRegionGuide.style.height = `${region.height * canvasBounds.height}px`;
+    const scaleX = canvasBounds.width / Math.max(1, el.canvas.width);
+    const scaleY = canvasBounds.height / Math.max(1, el.canvas.height);
+    el.spillRegionGuide.style.left = `${canvasBounds.left - stageBounds.left + mapped.left * scaleX}px`;
+    el.spillRegionGuide.style.top = `${canvasBounds.top - stageBounds.top + mapped.top * scaleY}px`;
+    el.spillRegionGuide.style.width = `${mapped.width * scaleX}px`;
+    el.spillRegionGuide.style.height = `${mapped.height * scaleY}px`;
   }
 
   function sampleSourceColor(point) {
@@ -1508,10 +1548,10 @@
       return;
     }
     if (state.spillRegion && (
-      point.canvasNormalizedX < state.spillRegion.left
-      || point.canvasNormalizedX > state.spillRegion.left + state.spillRegion.width
-      || point.canvasNormalizedY < state.spillRegion.top
-      || point.canvasNormalizedY > state.spillRegion.top + state.spillRegion.height
+      point.normalizedX < state.spillRegion.left
+      || point.normalizedX > state.spillRegion.left + state.spillRegion.width
+      || point.normalizedY < state.spillRegion.top
+      || point.normalizedY > state.spillRegion.top + state.spillRegion.height
     )) {
       notify("请在蓝色框选区域内点击需要移除的颜色");
       return;
@@ -1580,12 +1620,12 @@
     pauseEditor();
     spillRegionDrag = {
       pointerId: event.pointerId,
-      startX: point.canvasNormalizedX,
-      startY: point.canvasNormalizedY,
+      startX: point.normalizedX,
+      startY: point.normalizedY,
     };
     state.spillRegionDraft = {
-      left: point.canvasNormalizedX,
-      top: point.canvasNormalizedY,
+      left: point.normalizedX,
+      top: point.normalizedY,
       width: 0,
       height: 0,
     };
@@ -1598,13 +1638,13 @@
     if (!spillRegionDrag || spillRegionDrag.pointerId !== event.pointerId) return false;
     const point = pointerSourcePoint(event);
     if (!point) return true;
-    const left = Math.min(spillRegionDrag.startX, point.canvasNormalizedX);
-    const top = Math.min(spillRegionDrag.startY, point.canvasNormalizedY);
+    const left = Math.min(spillRegionDrag.startX, point.normalizedX);
+    const top = Math.min(spillRegionDrag.startY, point.normalizedY);
     state.spillRegionDraft = {
       left,
       top,
-      width: Math.abs(point.canvasNormalizedX - spillRegionDrag.startX),
-      height: Math.abs(point.canvasNormalizedY - spillRegionDrag.startY),
+      width: Math.abs(point.normalizedX - spillRegionDrag.startX),
+      height: Math.abs(point.normalizedY - spillRegionDrag.startY),
     };
     updateSpillRegionGuide();
     event.preventDefault();
