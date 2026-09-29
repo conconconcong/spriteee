@@ -10,7 +10,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png?v=3" />
     <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png?v=3" />
     <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=3" />
-    <link rel="stylesheet" href="./styles.css?v=3" />
+    <link rel="stylesheet" href="./styles.css?v=4" />
   </head>
   <body>
     <main>
@@ -34,6 +34,7 @@
           <input id="editorFileInput" type="file" accept="video/*" hidden />
           <input id="secondaryFileInput" type="file" accept="video/*,image/*" hidden />
           <input id="fileInput" type="file" accept="video/*" hidden />
+          <input id="spriteUploadInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
           <video id="editorVideo" muted playsinline preload="auto" hidden></video>
           <video id="secondaryVideo" muted playsinline loop preload="auto" hidden></video>
           <video id="sourceVideo" muted playsinline preload="metadata" hidden></video>
@@ -43,6 +44,7 @@
             <canvas id="editorCanvas" width="960" height="540"></canvas>
             <canvas id="spriteCanvas" hidden></canvas>
             <div id="cropGuide" class="crop-guide" hidden aria-label="可拖动裁剪选框"><i data-handle="nw"></i><i data-handle="ne"></i><i data-handle="se"></i><i data-handle="sw"></i></div>
+            <div id="spillRegionGuide" class="spill-region-guide" hidden aria-label="局部抠色作用区域"><span>仅处理此区域</span></div>
             <div id="precisionLoupe" class="precision-loupe" hidden aria-hidden="true"><div><canvas id="precisionLoupeCanvas" width="132" height="132"></canvas><i></i></div><span id="precisionLoupeLabel">RGB —</span></div>
             <div id="editorEmpty" class="editor-empty"><span class="editor-empty-icon" aria-hidden="true"></span><strong>添加视频开始制作</strong><p>视频编辑和精灵图生成共用这一份素材</p><button id="editorUploadBtn" class="primary-pill" type="button">选择视频</button></div>
             <div id="aiPreviewBadge" class="ai-preview-badge" hidden><i></i><span>精灵图 AI 抠像已开启</span></div>
@@ -104,6 +106,7 @@
               <div class="editor-range-row"><label for="edgeFeather">边缘柔化</label><input id="edgeFeather" class="range" type="range" min="0" max="100" value="32" /><output id="edgeFeatherValue">32</output></div>
               <div class="editor-range-row"><label for="despill">边缘净色</label><input id="despill" class="range" type="range" min="0" max="100" value="68" /><output id="despillValue">68</output></div>
               <div class="spill-detection"><i id="spillColorIndicator" aria-hidden="true"></i><span id="spillColorLabel">自动检测背景主色</span><div><button id="spillAutoBtn" class="active" type="button">自动</button><button id="spillPickBtn" type="button">主色取样</button><button id="spillAddBtn" type="button">＋ 加选</button></div></div>
+              <div class="spill-region-control"><span><strong>局部抠色</strong><small id="spillRegionStatus">先框选区域，再吸取框内颜色</small></span><div><button id="spillRegionBtn" type="button">框选区域</button><button id="spillRegionClearBtn" type="button" disabled>清除</button></div></div>
               <div class="mask-refine">
                 <div class="mask-refine-heading"><span><strong>遮罩修补</strong><small id="maskRefineStatus">直接在左侧画面涂抹</small></span><button id="maskClearBtn" type="button" disabled>清除</button></div>
                 <div class="mask-refine-actions" role="group" aria-label="遮罩修补方式"><button id="maskAddBtn" type="button"><i>＋</i>加选主体</button><button id="maskSubtractBtn" type="button"><i>−</i>减去背景</button></div>
@@ -111,7 +114,7 @@
               </div>
               <div class="transparency-lock"><span class="transparency-swatch" aria-hidden="true"></span><div><strong>透明背景 PNG</strong><small>背景将写入 Alpha 通道，不会填充颜色</small></div><b>自动</b></div>
             </div>
-            <p class="editor-hint">仍有蓝边时点“画面取色”，再点击左侧纯蓝背景，可精确锁定色键并重建毛发边缘。</p>
+            <p class="editor-hint">整片背景可用“主色取样”；只想处理一小块时，先点“框选区域”，再在框内吸取目标颜色。</p>
           </section>
 
           <section class="control-section sprite-control-section">
@@ -138,6 +141,7 @@
           <button id="generateBtn" class="generate-btn" type="button" disabled><span id="generateLabel">请先上传视频</span><i aria-hidden="true">→</i></button>
           <section id="postCompression" class="post-compression" aria-label="生成后精准压缩">
             <div class="post-compression-heading"><span class="compression-orb" aria-hidden="true"></span><div><strong>精准压缩</strong><small id="precisionCompressionStatus">生成精灵图后可用 · 不改变尺寸</small></div></div>
+            <button id="spriteUploadBtn" class="sprite-upload-btn" type="button"><span><strong>上传现有精灵图</strong><small id="spriteUploadStatus">PNG / JPG / WebP · 本地处理</small></span><i aria-hidden="true">＋</i></button>
             <div id="compressionLevelControl" class="quality-control post-quality"><div><span>压缩程度</span><strong id="compressionLevelValue">35% · 均衡</strong></div><input id="compressionLevel" class="range" type="range" min="10" max="100" value="35" aria-describedby="compressionLevelHint" /><p id="compressionLevelHint" class="compression-level-hint">JPG / WebP 向右可强力压缩；PNG 保持无损</p></div>
             <button id="precisionCompressBtn" class="precision-compress-btn" type="button" disabled><span>开始压缩</span><i aria-hidden="true">↓</i></button>
           </section>
@@ -159,6 +163,6 @@
 
     <footer><span>SPRITEEE · VIDEO TO SPRITE</span><span>一个画布，一条完整工作流</span></footer>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260902"></script><script src="./editor.js"></script>
+    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260929"></script><script src="./editor.js?v=20260929"></script>
   </body>
 </html>

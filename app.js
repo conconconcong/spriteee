@@ -4,6 +4,9 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const els = {
   dropzone: $("#dropzone"),
   fileInput: $("#fileInput"),
+  spriteUploadInput: $("#spriteUploadInput"),
+  spriteUploadBtn: $("#spriteUploadBtn"),
+  spriteUploadStatus: $("#spriteUploadStatus"),
   browseBtn: $("#browseBtn"),
   replaceBtn: $("#replaceBtn"),
   fileCard: $("#fileCard"),
@@ -97,6 +100,7 @@ const state = {
   isCompressing: false,
   isProcessing: false,
   editorSynced: false,
+  importedSpriteFile: null,
 };
 
 const typeExtensions = {
@@ -143,6 +147,19 @@ function isVideoFile(file) {
     file.type?.startsWith("video/")
     || /\.(mp4|mov|m4v|webm|ogv)$/i.test(file.name || "")
   ));
+}
+
+function isSpriteImageFile(file) {
+  return Boolean(file && (
+    ["image/png", "image/jpeg", "image/webp"].includes(file.type)
+    || /\.(png|jpe?g|webp)$/i.test(file.name || "")
+  ));
+}
+
+function spriteImageType(file) {
+  if (file.type === "image/png" || /\.png$/i.test(file.name || "")) return "image/png";
+  if (file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name || "")) return "image/jpeg";
+  return "image/webp";
 }
 
 function selectedFrameCount() {
@@ -201,7 +218,8 @@ function resolvedDeliveryFormat(format, width, height) {
 
 function syncOutputFileUI({ pulse = false } = {}) {
   if (!state.outputBlob) return;
-  const extension = typeExtensions[state.format].toUpperCase();
+  const outputType = typeExtensions[state.outputBlob.type] ? state.outputBlob.type : state.format;
+  const extension = typeExtensions[outputType].toUpperCase();
   const currentSize = formatDownloadBytes(state.outputBlob.size);
   const status = state.outputCompressed ? "已压缩" : state.compressionAttempted ? "已优化" : "原图";
   els.summarySize.textContent = currentSize;
@@ -223,6 +241,7 @@ function setRangeProgress(input) {
 
 function markDirty() {
   if (!state.file || state.isProcessing || state.isCompressing) return;
+  state.importedSpriteFile = null;
   state.rawOutputBlob = null;
   state.outputBlob = null;
   state.outputCompressed = false;
@@ -236,7 +255,7 @@ function markDirty() {
 }
 
 function updateUI({ dirty = false } = {}) {
-  if (state.transparentPNG) {
+  if (state.transparentPNG && !state.importedSpriteFile) {
     state.format = "image/png";
   }
   if (dirty && state.file) markDirty();
@@ -257,7 +276,7 @@ function updateUI({ dirty = false } = {}) {
   els.compressionLevel.value = state.compressionLevel;
   els.compressionLevelValue.textContent = `${state.compressionLevel}% · ${compressionLevelLabel()}`;
   els.formatSelect.value = state.format;
-  els.formatSelect.disabled = state.transparentPNG || state.isProcessing || state.isCompressing;
+  els.formatSelect.disabled = (state.transparentPNG && !state.importedSpriteFile) || state.isProcessing || state.isCompressing;
   const isLosslessPNG = state.format === "image/png";
   els.compressionLevel.disabled = state.isCompressing;
   els.compressionLevelHint.textContent = isLosslessPNG
@@ -294,12 +313,17 @@ function updateUI({ dirty = false } = {}) {
   setRangeProgress(els.fps);
   setRangeProgress(els.compressionLevel);
 
-  els.canvasDimensions.textContent = state.file ? `${width} × ${height}` : `${width} × AUTO`;
-  els.summaryFrames.textContent = `${frames} FRAMES`;
-  els.summaryClip.textContent = state.file ? `${clipDuration().toFixed(1)} 秒` : "完整视频";
+  const hasImportedSprite = Boolean(state.importedSpriteFile && state.outputWidth && state.outputHeight);
+  els.canvasDimensions.textContent = hasImportedSprite
+    ? `${state.outputWidth} × ${state.outputHeight}`
+    : state.file ? `${width} × ${height}` : `${width} × AUTO`;
+  els.summaryFrames.textContent = hasImportedSprite ? "已上传" : `${frames} FRAMES`;
+  els.summaryClip.textContent = hasImportedSprite ? "现有精灵图" : state.file ? `${clipDuration().toFixed(1)} 秒` : "完整视频";
   els.summarySize.textContent = state.outputBlob ? formatBytes(state.outputBlob.size) : `≈ ${formatBytes(estimateBytes())}`;
   if (state.outputBlob) syncOutputFileUI();
-  els.outputSpec.textContent = `${width} × ${state.file ? height : "AUTO"} / ${deliveryExtension}`;
+  els.outputSpec.textContent = hasImportedSprite
+    ? `${state.outputWidth} × ${state.outputHeight} / ${extension}`
+    : `${width} × ${state.file ? height : "AUTO"} / ${deliveryExtension}`;
   els.countControl.hidden = state.mode !== "count";
   els.fpsControl.hidden = state.mode !== "fps";
   els.compressionHint.textContent = state.transparentPNG
@@ -315,6 +339,9 @@ function updateUI({ dirty = false } = {}) {
             : "WebP 通常兼顾清晰度与小体积";
 
   const hasOutput = Boolean(state.rawOutputBlob);
+  els.spriteUploadStatus.textContent = hasImportedSprite
+    ? `${state.importedSpriteFile.name} · ${state.outputWidth} × ${state.outputHeight}`
+    : "PNG / JPG / WebP · 本地处理";
   els.postCompression.classList.toggle("ready", hasOutput && !state.compressionAttempted);
   els.postCompression.classList.toggle("compressed", state.compressionAttempted);
   els.postCompression.classList.toggle("compressing", state.isCompressing);
@@ -331,9 +358,9 @@ function updateUI({ dirty = false } = {}) {
       ? `已完成 · ${formatDownloadBytes(state.rawOutputBlob.size)} → ${formatDownloadBytes(state.outputBlob.size)} · 尺寸不变`
       : "已完成 · 当前已是最佳大小 · 尺寸不变";
   } else if (hasOutput) {
-    els.precisionCompressionStatus.textContent = `原始文件 ${formatBytes(state.rawOutputBlob.size)} · ${state.compressionLevel}% ${isLosslessPNG ? "无损优化" : "压缩"}`;
+    els.precisionCompressionStatus.textContent = `${hasImportedSprite ? "已载入" : "原始文件"} ${formatBytes(state.rawOutputBlob.size)} · ${state.compressionLevel}% ${isLosslessPNG ? "无损优化" : "压缩"}`;
   } else {
-    els.precisionCompressionStatus.textContent = "生成精灵图后可用 · 不改变尺寸";
+    els.precisionCompressionStatus.textContent = "生成或上传精灵图后可用 · 不改变尺寸";
   }
 
   $$(".segment").forEach((button) => button.classList.toggle("active", button.dataset.mode === state.mode));
@@ -359,6 +386,82 @@ function openFilePicker() {
   }
 }
 
+function openSpritePicker() {
+  if (state.isProcessing || state.isCompressing) return;
+  els.spriteUploadInput.value = "";
+  els.spriteUploadInput.click();
+}
+
+async function decodeSpriteImage(file) {
+  if ("createImageBitmap" in window) {
+    const bitmap = await createImageBitmap(file);
+    return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = url;
+    await image.decode();
+    return { source: image, width: image.naturalWidth, height: image.naturalHeight, close: () => URL.revokeObjectURL(url) };
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
+}
+
+async function loadSpriteForCompression(file) {
+  if (state.isProcessing || state.isCompressing) {
+    toast("请等待当前处理完成");
+    return;
+  }
+  if (!isSpriteImageFile(file)) {
+    toast("请选择 PNG、JPG 或 WebP 精灵图");
+    return;
+  }
+  try {
+    const decoded = await decodeSpriteImage(file);
+    try {
+      if (!decoded.width || !decoded.height || decoded.width > MAX_CANVAS_WIDTH || decoded.height > MAX_CANVAS_WIDTH) {
+        throw new Error(`图片尺寸需小于 ${MAX_CANVAS_WIDTH}px`);
+      }
+      const canvas = els.spriteCanvas;
+      canvas.width = decoded.width;
+      canvas.height = decoded.height;
+      const context = canvas.getContext("2d", { alpha: true });
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(decoded.source, 0, 0);
+      state.importedSpriteFile = file;
+      state.rawOutputBlob = file;
+      state.outputBlob = file;
+      state.outputWidth = decoded.width;
+      state.outputHeight = decoded.height;
+      state.format = spriteImageType(file);
+      state.transparentPNG = false;
+      state.outputCompressed = false;
+      state.compressionAttempted = false;
+      state.compressionSavings = 0;
+      state.wideExportSource = null;
+      els.emptyPreview.hidden = true;
+      canvas.hidden = false;
+      els.downloadBtn.hidden = false;
+      els.previewScale.textContent = canvas.width > els.previewViewport.clientWidth ? "FIT HEIGHT · 可横向滚动" : "1 : 1";
+      els.materialState.textContent = "精灵图已载入";
+      window.dispatchEvent(new CustomEvent("spriteeee:sprite-ready", {
+        detail: { label: `${decoded.width} × ${decoded.height} · ${typeExtensions[state.format].toUpperCase()}`, imported: true },
+      }));
+      updateUI();
+      syncOutputFileUI({ pulse: true });
+      toast(`精灵图已载入 · ${decoded.width} × ${decoded.height}`);
+    } finally {
+      decoded.close();
+    }
+  } catch (error) {
+    console.error(error);
+    toast(error.message || "精灵图读取失败，请更换文件后重试");
+  }
+}
+
 async function loadVideoFile(file, { fromEditor = false, silent = false } = {}) {
   if (state.isProcessing || state.isCompressing) {
     if (!silent) toast("请等待当前处理完成");
@@ -372,6 +475,7 @@ async function loadVideoFile(file, { fromEditor = false, silent = false } = {}) 
   if (!fromEditor) state.editorSynced = false;
   if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
   state.file = file;
+  state.importedSpriteFile = null;
   state.fileUrl = URL.createObjectURL(file);
   state.rawOutputBlob = null;
   state.outputBlob = null;
@@ -1009,6 +1113,8 @@ async function encodeIndexedPNG(source, maxColors = 256) {
 
 async function generateSprite() {
   if (!state.file || state.isProcessing || state.isCompressing) return;
+  state.importedSpriteFile = null;
+  if (window.SPRITEEE_EDITOR?.getSummary?.().matting) state.transparentPNG = true;
   if (state.transparentPNG) state.format = "image/png";
   const frameCount = selectedFrameCount();
   const width = state.frameWidth;
@@ -1180,7 +1286,8 @@ async function preciseCompressOutput() {
       ? await encodeLosslessPNG(source, state.compressionLevel)
       : await canvasToBlob(source, state.format, outputQuality());
     const original = state.rawOutputBlob;
-    const useCandidate = Boolean(candidate && candidate.size < original.size);
+    const sameFormat = Boolean(candidate && candidate.type === original.type);
+    const useCandidate = Boolean(candidate && (!sameFormat || candidate.size < original.size));
     state.outputBlob = useCandidate ? candidate : original;
     state.outputCompressed = useCandidate;
     state.compressionAttempted = true;
@@ -1206,12 +1313,16 @@ async function preciseCompressOutput() {
 function downloadSprite() {
   if (!state.outputBlob) return;
   syncOutputFileUI();
-  const extension = typeExtensions[state.format];
-  const base = state.file.name.replace(/\.[^.]+$/, "");
+  const outputType = typeExtensions[state.outputBlob.type] ? state.outputBlob.type : state.format;
+  const extension = typeExtensions[outputType];
+  const sourceFile = state.importedSpriteFile || state.file;
+  const base = (sourceFile?.name || "sprite").replace(/\.[^.]+$/, "");
   const url = URL.createObjectURL(state.outputBlob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${base}_framestrip_${selectedFrameCount()}f${state.outputCompressed ? "_compressed" : ""}.${extension}`;
+  anchor.download = state.importedSpriteFile
+    ? `${base}${state.outputCompressed ? "_compressed" : "_optimized"}.${extension}`
+    : `${base}_framestrip_${selectedFrameCount()}f${state.outputCompressed ? "_compressed" : ""}.${extension}`;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
@@ -1238,6 +1349,17 @@ els.dropzone.addEventListener("keydown", (event) => {
   if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openFilePicker(); }
 });
 els.fileInput.addEventListener("change", (event) => loadVideoFile(event.target.files[0]));
+els.spriteUploadBtn.addEventListener("click", openSpritePicker);
+els.spriteUploadInput.addEventListener("change", (event) => loadSpriteForCompression(event.target.files[0]));
+["dragenter", "dragover"].forEach((name) => els.spriteUploadBtn.addEventListener(name, (event) => {
+  event.preventDefault();
+  els.spriteUploadBtn.classList.add("dragging");
+}));
+["dragleave", "drop"].forEach((name) => els.spriteUploadBtn.addEventListener(name, (event) => {
+  event.preventDefault();
+  els.spriteUploadBtn.classList.remove("dragging");
+}));
+els.spriteUploadBtn.addEventListener("drop", (event) => loadSpriteForCompression(event.dataTransfer.files[0]));
 
 ["dragenter", "dragover"].forEach((name) => els.dropzone.addEventListener(name, (event) => {
   event.preventDefault();
@@ -1315,13 +1437,21 @@ els.aspectLock.addEventListener("click", () => {
 });
 
 els.formatSelect.addEventListener("change", (event) => {
-  if (state.transparentPNG) {
+  if (state.transparentPNG && !state.importedSpriteFile) {
     state.format = "image/png";
     updateUI();
     return;
   }
   state.format = event.target.value;
-  updateUI({ dirty: true });
+  if (state.importedSpriteFile) {
+    state.outputBlob = state.rawOutputBlob;
+    state.outputCompressed = false;
+    state.compressionAttempted = false;
+    state.compressionSavings = 0;
+    updateUI();
+  } else {
+    updateUI({ dirty: true });
+  }
 });
 els.compressionLevel.addEventListener("input", (event) => {
   state.compressionLevel = clamp(Number(event.target.value) || 10, 10, 100);

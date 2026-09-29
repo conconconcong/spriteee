@@ -71,6 +71,10 @@
     spillAutoBtn: q("#spillAutoBtn"),
     spillPickBtn: q("#spillPickBtn"),
     spillAddBtn: q("#spillAddBtn"),
+    spillRegionGuide: q("#spillRegionGuide"),
+    spillRegionBtn: q("#spillRegionBtn"),
+    spillRegionClearBtn: q("#spillRegionClearBtn"),
+    spillRegionStatus: q("#spillRegionStatus"),
     precisionLoupe: q("#precisionLoupe"),
     precisionLoupeCanvas: q("#precisionLoupeCanvas"),
     precisionLoupeLabel: q("#precisionLoupeLabel"),
@@ -136,6 +140,9 @@
     pickingSpillColor: false,
     spillPickMode: null,
     manualSpillColors: [],
+    spillRegion: null,
+    spillRegionDraft: null,
+    selectingSpillRegion: false,
     maskBrushMode: null,
     maskBrushSize: 0.04,
     manualMaskStrokes: [],
@@ -288,6 +295,9 @@
       pickingSpillColor: false,
       spillPickMode: null,
       manualSpillColors: [],
+      spillRegion: null,
+      spillRegionDraft: null,
+      selectingSpillRegion: false,
       maskBrushMode: null,
       maskBrushSize: 0.04,
       manualMaskStrokes: [],
@@ -315,6 +325,7 @@
     el.stage.style.setProperty("--preview-aspect", String(aspect));
     el.stage.classList.toggle("portrait-preview", aspect < 0.9);
     el.stage.classList.toggle("square-preview", aspect >= 0.9 && aspect <= 1.1);
+    updateSpillRegionGuide();
   }
 
   function updatePreviewCanvasSize() {
@@ -614,8 +625,14 @@
 
     const width = canvas.width;
     const height = canvas.height;
+    const region = state.spillColorLocked ? state.spillRegion : null;
+    const regionLeft = region ? Math.floor(region.left * width) : 0;
+    const regionTop = region ? Math.floor(region.top * height) : 0;
+    const regionRight = region ? Math.ceil((region.left + region.width) * width) : width;
+    const regionBottom = region ? Math.ceil((region.top + region.height) * height) : height;
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
+        if (region && (x < regionLeft || x >= regionRight || y < regionTop || y >= regionBottom)) continue;
         const index = (y * width + x) * 4;
         const alpha = data[index + 3];
         if (alpha < 5) continue;
@@ -761,7 +778,8 @@
   function updateUI() {
     const hasVideo = Boolean(state.file);
     const clipLength = Math.max(0, state.trimEnd - state.trimStart);
-    el.empty.hidden = hasVideo;
+    const showSprite = state.previewMode === "sprite" && state.spriteReady;
+    el.empty.hidden = hasVideo || showSprite;
     el.replaceBtn.hidden = !hasVideo;
     el.playBtn.disabled = !hasVideo;
     el.scrubber.disabled = !hasVideo;
@@ -777,15 +795,17 @@
     el.mattingToggle.checked = state.matting;
     el.mattingControls.classList.toggle("off", !state.matting);
     el.aiBadge.hidden = !state.matting;
-    const showSprite = state.previewMode === "sprite" && state.spriteReady;
     el.canvas.hidden = showSprite;
     el.spriteCanvas.hidden = !showSprite;
     el.stage.classList.toggle("sprite-mode", showSprite);
     el.stage.classList.toggle("matting-preview", state.matting && !showSprite);
     el.stage.classList.toggle("color-picking", state.pickingSpillColor && !showSprite);
     el.stage.classList.toggle("mask-brushing", Boolean(state.maskBrushMode) && !showSprite);
-    el.stage.classList.toggle("precision-tool", (state.pickingSpillColor || Boolean(state.maskBrushMode)) && !showSprite);
-    el.stage.dataset.pickHint = state.spillPickMode === "add" ? "点击补充背景颜色" : "点击主背景取色";
+    el.stage.classList.toggle("region-selecting", state.selectingSpillRegion && !showSprite);
+    el.stage.classList.toggle("precision-tool", (state.pickingSpillColor || state.selectingSpillRegion || Boolean(state.maskBrushMode)) && !showSprite);
+    el.stage.dataset.pickHint = state.spillPickMode === "add"
+      ? "点击补充背景颜色"
+      : state.spillRegion ? "点击框内需要移除的颜色" : "点击主背景取色";
     if (showSprite || (!state.pickingSpillColor && !state.maskBrushMode)) hidePrecisionLoupe();
     el.cropGuide.hidden = !hasVideo || showSprite;
     if (hasVideo) {
@@ -795,6 +815,7 @@
       el.cropGuide.style.width = `${selection.width * 100}%`;
       el.cropGuide.style.height = `${selection.height * 100}%`;
     }
+    updateSpillRegionGuide();
     el.previewVideoBtn.classList.toggle("active", !showSprite);
     el.previewSpriteBtn.classList.toggle("active", showSprite);
     el.previewSpriteBtn.disabled = !state.spriteReady;
@@ -847,6 +868,14 @@
       ? "点击主背景"
       : state.spillColorLocked ? "重取主色" : "主色取样";
     el.spillAddBtn.textContent = state.spillPickMode === "add" ? "点击补充色" : "＋ 加选";
+    el.spillRegionBtn.classList.toggle("active", state.selectingSpillRegion || state.spillPickMode === "region");
+    el.spillRegionBtn.textContent = state.selectingSpillRegion ? "拖动框选中" : state.spillRegion ? "重新框选" : "框选区域";
+    el.spillRegionClearBtn.disabled = !state.spillRegion && !state.spillRegionDraft;
+    el.spillRegionStatus.textContent = state.selectingSpillRegion
+      ? "在左侧画面拖出作用范围"
+      : state.spillRegion
+        ? state.pickingSpillColor ? "区域已锁定，请点击框内目标颜色" : "色键只作用于蓝色框内"
+        : "先框选区域，再吸取框内颜色";
     el.maskAddBtn.classList.toggle("active", state.maskBrushMode === "add");
     el.maskSubtractBtn.classList.toggle("active", state.maskBrushMode === "subtract");
     el.maskClearBtn.disabled = state.manualMaskStrokes.length === 0;
@@ -923,6 +952,9 @@
       state.pickingSpillColor = false;
       state.spillPickMode = null;
       state.manualSpillColors = [];
+      state.spillRegion = null;
+      state.spillRegionDraft = null;
+      state.selectingSpillRegion = false;
       state.maskBrushMode = null;
       state.manualMaskStrokes = [];
       state.lastMaskVideoTime = -1;
@@ -1439,7 +1471,22 @@
       sourceY,
       normalizedX: clamp(sourceX / sourceWidth, 0, 1),
       normalizedY: clamp(sourceY / sourceHeight, 0, 1),
+      canvasNormalizedX: clamp(canvasX / el.canvas.width, 0, 1),
+      canvasNormalizedY: clamp(canvasY / el.canvas.height, 0, 1),
     };
+  }
+
+  function updateSpillRegionGuide() {
+    const region = state.spillRegionDraft || state.spillRegion;
+    const show = Boolean(region && state.file && state.previewMode === "video");
+    el.spillRegionGuide.hidden = !show;
+    if (!show) return;
+    const canvasBounds = el.canvas.getBoundingClientRect();
+    const stageBounds = el.stage.getBoundingClientRect();
+    el.spillRegionGuide.style.left = `${canvasBounds.left - stageBounds.left + region.left * canvasBounds.width}px`;
+    el.spillRegionGuide.style.top = `${canvasBounds.top - stageBounds.top + region.top * canvasBounds.height}px`;
+    el.spillRegionGuide.style.width = `${region.width * canvasBounds.width}px`;
+    el.spillRegionGuide.style.height = `${region.height * canvasBounds.height}px`;
   }
 
   function sampleSourceColor(point) {
@@ -1539,6 +1586,15 @@
       notify("请点击主画面的纯色背景区域");
       return;
     }
+    if (state.spillRegion && (
+      point.canvasNormalizedX < state.spillRegion.left
+      || point.canvasNormalizedX > state.spillRegion.left + state.spillRegion.width
+      || point.canvasNormalizedY < state.spillRegion.top
+      || point.canvasNormalizedY > state.spillRegion.top + state.spillRegion.height
+    )) {
+      notify("请在蓝色框选区域内点击需要移除的颜色");
+      return;
+    }
     const color = sampleSourceColor(point);
     if (!color) {
       notify("没有读取到背景颜色，请重新点击");
@@ -1583,12 +1639,81 @@
     updateUI();
     renderEditorFrame({ useMatting: true });
     signalEditorChange();
-    notify(pickingMode === "add"
+    notify(pickingMode === "region"
+      ? `已锁定${state.spillColor.name}色键，仅处理框选区域`
+      : pickingMode === "add"
       ? `已加选第 ${state.manualSpillColors.length} 个颜色，可继续点击背景，完成后再点“加选”`
       : `已锁定${state.spillColor.name}背景，可用“加选”补充明暗色`);
   }
 
   let maskPaint = null;
+  let spillRegionDrag = null;
+
+  function beginSpillRegionSelection(event) {
+    const point = pointerSourcePoint(event);
+    if (!point) {
+      notify("请在主画面内拖动框选区域");
+      return;
+    }
+    setPreviewMode("video");
+    pauseEditor();
+    spillRegionDrag = {
+      pointerId: event.pointerId,
+      startX: point.canvasNormalizedX,
+      startY: point.canvasNormalizedY,
+    };
+    state.spillRegionDraft = {
+      left: point.canvasNormalizedX,
+      top: point.canvasNormalizedY,
+      width: 0,
+      height: 0,
+    };
+    el.canvas.setPointerCapture?.(event.pointerId);
+    updateSpillRegionGuide();
+    event.preventDefault();
+  }
+
+  function moveSpillRegionSelection(event) {
+    if (!spillRegionDrag || spillRegionDrag.pointerId !== event.pointerId) return false;
+    const point = pointerSourcePoint(event);
+    if (!point) return true;
+    const left = Math.min(spillRegionDrag.startX, point.canvasNormalizedX);
+    const top = Math.min(spillRegionDrag.startY, point.canvasNormalizedY);
+    state.spillRegionDraft = {
+      left,
+      top,
+      width: Math.abs(point.canvasNormalizedX - spillRegionDrag.startX),
+      height: Math.abs(point.canvasNormalizedY - spillRegionDrag.startY),
+    };
+    updateSpillRegionGuide();
+    event.preventDefault();
+    return true;
+  }
+
+  function endSpillRegionSelection(event) {
+    if (!spillRegionDrag || spillRegionDrag.pointerId !== event.pointerId) return false;
+    el.canvas.releasePointerCapture?.(event.pointerId);
+    spillRegionDrag = null;
+    const region = state.spillRegionDraft;
+    if (!region || region.width < 0.012 || region.height < 0.012) {
+      state.spillRegionDraft = null;
+      updateSpillRegionGuide();
+      notify("框选范围太小，请拖出更大的区域");
+      event.preventDefault();
+      return true;
+    }
+    state.spillRegion = region;
+    state.spillRegionDraft = null;
+    state.selectingSpillRegion = false;
+    state.pickingSpillColor = true;
+    state.spillPickMode = "region";
+    state.maskBrushMode = null;
+    invalidateSpritePreview();
+    updateUI();
+    notify("区域已锁定，请点击框内需要移除的颜色");
+    event.preventDefault();
+    return true;
+  }
 
   function addManualMaskPoint(event, force = false) {
     const point = pointerSourcePoint(event);
@@ -1643,6 +1768,10 @@
 
   function beginCanvasCrop(event) {
     if (!state.file || state.exporting || state.bridgeRendering || event.button !== 0) return;
+    if (state.selectingSpillRegion) {
+      beginSpillRegionSelection(event);
+      return;
+    }
     if (state.pickingSpillColor) {
       pickSpillColor(event);
       event.preventDefault();
@@ -1676,6 +1805,7 @@
   }
 
   function moveCanvasCrop(event) {
+    if (moveSpillRegionSelection(event)) return;
     updatePrecisionLoupe(event);
     if (maskPaint && maskPaint.pointerId === event.pointerId) {
       maskPaint.changed = addManualMaskPoint(event) || maskPaint.changed;
@@ -1693,6 +1823,7 @@
   }
 
   function endCanvasCrop(event) {
+    if (endSpillRegionSelection(event)) return;
     if (maskPaint && maskPaint.pointerId === event.pointerId) {
       el.canvas.releasePointerCapture?.(event.pointerId);
       const changed = maskPaint.changed;
@@ -1709,7 +1840,7 @@
   }
 
   function zoomCanvasCrop(event) {
-    if (!state.file || state.exporting || state.bridgeRendering || state.pickingSpillColor || state.maskBrushMode) return;
+    if (!state.file || state.exporting || state.bridgeRendering || state.pickingSpillColor || state.selectingSpillRegion || state.maskBrushMode) return;
     event.preventDefault();
     setPreviewMode("video");
     pauseEditor();
@@ -1907,6 +2038,8 @@
     const cancel = state.pickingSpillColor && state.spillPickMode === mode;
     state.pickingSpillColor = !cancel;
     state.spillPickMode = cancel ? null : mode;
+    state.selectingSpillRegion = false;
+    state.spillRegionDraft = null;
     state.maskBrushMode = null;
     setPreviewMode("video");
     pauseEditor();
@@ -1918,12 +2051,49 @@
 
   el.spillPickBtn.addEventListener("click", () => toggleSpillPicker("replace"));
   el.spillAddBtn.addEventListener("click", () => toggleSpillPicker("add"));
+  el.spillRegionBtn.addEventListener("click", () => {
+    if (!state.file || !state.matting) {
+      notify("请先添加视频并开启 AI 抠像");
+      return;
+    }
+    const cancel = state.selectingSpillRegion;
+    state.selectingSpillRegion = !cancel;
+    state.spillRegionDraft = null;
+    state.pickingSpillColor = false;
+    state.spillPickMode = null;
+    state.maskBrushMode = null;
+    setPreviewMode("video");
+    pauseEditor();
+    updateUI();
+    notify(cancel ? "已取消局部框选" : "请在左侧画面拖动框选作用区域");
+  });
+  el.spillRegionClearBtn.addEventListener("click", () => {
+    state.spillRegion = null;
+    state.spillRegionDraft = null;
+    state.selectingSpillRegion = false;
+    state.pickingSpillColor = false;
+    state.spillPickMode = null;
+    state.spillColorLocked = false;
+    state.spillColor = null;
+    state.manualSpillColors = [];
+    state.spillMisses = 0;
+    state.lastMaskVideoTime = -1;
+    invalidateSpritePreview();
+    if (state.matting && state.segmentersReady) updateAIMask(true);
+    updateUI();
+    renderEditorFrame();
+    signalEditorChange();
+    notify("局部抠色已清除，恢复自动识别");
+  });
   el.spillAutoBtn.addEventListener("click", () => {
     state.pickingSpillColor = false;
     state.spillPickMode = null;
     state.spillColorLocked = false;
     state.spillColor = null;
     state.manualSpillColors = [];
+    state.spillRegion = null;
+    state.spillRegionDraft = null;
+    state.selectingSpillRegion = false;
     state.spillMisses = 0;
     state.lastMaskVideoTime = -1;
     if (state.matting && state.segmentersReady) updateAIMask(true);
@@ -1941,6 +2111,8 @@
     state.maskBrushMode = state.maskBrushMode === mode ? null : mode;
     state.pickingSpillColor = false;
     state.spillPickMode = null;
+    state.selectingSpillRegion = false;
+    state.spillRegionDraft = null;
     setPreviewMode("video");
     pauseEditor();
     updateUI();
@@ -2054,6 +2226,9 @@
       state.pickingSpillColor = false;
       state.spillPickMode = null;
       state.manualSpillColors = [];
+      state.spillRegion = null;
+      state.spillRegionDraft = null;
+      state.selectingSpillRegion = false;
       state.maskBrushMode = null;
       state.lastMaskVideoTime = -1;
       window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
@@ -2080,6 +2255,9 @@
     state.pickingSpillColor = false;
     state.spillPickMode = null;
     state.manualSpillColors = [];
+    state.spillRegion = null;
+    state.spillRegionDraft = null;
+    state.selectingSpillRegion = false;
     state.maskBrushMode = null;
     state.lastMaskVideoTime = -1;
     window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
@@ -2105,6 +2283,9 @@
       state.pickingSpillColor = false;
       state.spillPickMode = null;
       state.manualSpillColors = [];
+      state.spillRegion = null;
+      state.spillRegionDraft = null;
+      state.selectingSpillRegion = false;
       state.maskBrushMode = null;
       state.lastMaskVideoTime = -1;
       el.modelStatus.textContent = "模型加载失败，请检查网络后重试";
