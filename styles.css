@@ -232,6 +232,18 @@ main {
 .segmented { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; margin-bottom: 17px; border-radius: 10px; background: #f0f0f2; }
 .segment { padding: 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; transition: background .18s, color .18s, box-shadow .18s; }
 .segment.active { background: white; color: var(--ink); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+.sprite-row-setting { display: grid; gap: 9px; margin: -4px 0 17px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: #f8f8fa; }
+.sprite-row-setting > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sprite-row-setting strong { font-size: 9px; }
+.sprite-row-setting small { color: var(--faint); font-size: 8px; }
+.row-layout-picker { display: grid; grid-template-columns: repeat(3,1fr); gap: 5px; }
+.row-layout-picker button { height: 38px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid transparent; border-radius: 8px; background: #ececf0; color: var(--muted); font-size: 8px; cursor: pointer; transition: background .18s,color .18s,border-color .18s,box-shadow .18s; }
+.row-layout-picker button.active { border-color: rgba(0,113,227,.2); background: white; color: var(--blue); box-shadow: 0 2px 7px rgba(0,0,0,.06); }
+.row-layout-picker i { position: relative; width: 22px; height: 14px; display: block; box-sizing: border-box; border: 1px solid currentColor; border-radius: 3px; opacity: .8; }
+.row-layout-picker button[data-rows="2"] i::before,.row-layout-picker button[data-rows="3"] i::before,.row-layout-picker button[data-rows="3"] i::after { content: ""; position: absolute; left: 1px; right: 1px; border-top: 1px solid currentColor; }
+.row-layout-picker button[data-rows="2"] i::before { top: 50%; }
+.row-layout-picker button[data-rows="3"] i::before { top: 33.333%; }
+.row-layout-picker button[data-rows="3"] i::after { top: 66.666%; }
 .range-value-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .range-value-row label { color: var(--muted); font-size: 10px; }
 .range-value-row > div { display: flex; align-items: center; gap: 5px; }

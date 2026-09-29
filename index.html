@@ -4,18 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f5f5f7" />
-    <meta name="description" content="SPRITEEE 是一款在浏览器本地完成视频编辑、AI 抠像与单行精灵图交付的工具。" />
+    <meta name="description" content="SPRITEEE 是一款在浏览器本地完成视频编辑、AI 抠像与一至三行精灵图交付的工具。" />
     <title>SPRITEEE — 视频编辑与精灵图工具</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=3" />
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png?v=3" />
     <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png?v=3" />
     <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=3" />
-    <link rel="stylesheet" href="./styles.css?v=4" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <main>
       <section class="hero unified-hero" aria-labelledby="page-title">
-        <div class="hero-copy"><h1 id="page-title" aria-label="SPRITEEE"><span>SPRIT</span><span class="pixel-eee" aria-hidden="true">EEE</span></h1><p>在一个画布里完成视频编辑、精灵图抠像与单行横排交付。</p></div>
+        <div class="hero-copy"><h1 id="page-title" aria-label="SPRITEEE"><span>SPRIT</span><span class="pixel-eee" aria-hidden="true">EEE</span></h1><p>在一个画布里完成视频编辑、精灵图抠像与一至三行交付。</p></div>
         <div class="workflow-note" aria-label="工作流程"><span>01 编辑视频</span><i>→</i><span>02 精灵图抠像</span><i>→</i><span>03 导出</span></div>
       </section>
 
@@ -118,8 +118,9 @@
           </section>
 
           <section class="control-section sprite-control-section">
-            <div class="control-title"><div><span>A</span><strong>取帧方式</strong></div><small>单行横排</small></div>
+            <div class="control-title"><div><span>A</span><strong>取帧方式</strong></div><small id="rowLayoutSummary">单行横排</small></div>
             <div class="segmented" role="group" aria-label="取帧方式"><button class="segment active" type="button" data-mode="count">按总帧数</button><button class="segment" type="button" data-mode="fps">按帧率</button></div>
+            <div class="sprite-row-setting"><div><strong>精灵图行数</strong><small id="rowLayoutHint">每行 12 帧</small></div><div class="row-layout-picker" role="group" aria-label="精灵图排列行数"><button class="active" type="button" data-rows="1"><i></i><span>1 行</span></button><button type="button" data-rows="2"><i></i><span>2 行</span></button><button type="button" data-rows="3"><i></i><span>3 行</span></button></div></div>
             <div id="countControl" class="range-control"><div class="range-value-row"><label for="frameCount">总帧数</label><div><input id="frameCountNumber" type="number" min="2" max="48" value="12" /><span>帧</span></div></div><input id="frameCount" class="range" type="range" min="2" max="48" value="12" /><div class="range-marks"><span>2</span><span>24</span><span>48</span></div></div>
             <div id="fpsControl" class="range-control" hidden><div class="range-value-row"><label for="fps">采样帧率</label><div><input id="fpsNumber" type="number" min="0.5" max="24" step="0.5" value="2" /><span>FPS</span></div></div><input id="fps" class="range" type="range" min="0.5" max="24" step="0.5" value="2" /><div class="range-marks"><span>0.5</span><span>12</span><span>24</span></div></div>
           </section>
@@ -163,6 +164,6 @@
 
     <footer><span>SPRITEEE · VIDEO TO SPRITE</span><span>一个画布，一条完整工作流</span></footer>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260929"></script><script src="./editor.js?v=20260929"></script>
+    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260929b"></script><script src="./editor.js?v=20260929"></script>
   </body>
 </html>
