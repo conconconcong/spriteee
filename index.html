@@ -10,7 +10,7 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png?v=3" />
     <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png?v=3" />
     <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png?v=3" />
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
   </head>
   <body>
     <main>
@@ -104,9 +104,6 @@
               <div class="model-card"><span class="model-orb" aria-hidden="true"></span><div><strong>双模型毛发精修</strong><small id="modelStatus">首次使用需下载本地模型</small></div></div>
               <div class="editor-range-row"><label for="hairDetail">毛发细节</label><input id="hairDetail" class="range" type="range" min="0" max="100" value="78" /><output id="hairDetailValue">78</output></div>
               <div class="editor-range-row"><label for="edgeFeather">边缘柔化</label><input id="edgeFeather" class="range" type="range" min="0" max="100" value="32" /><output id="edgeFeatherValue">32</output></div>
-              <div class="editor-range-row"><label for="despill">边缘净色</label><input id="despill" class="range" type="range" min="0" max="100" value="68" /><output id="despillValue">68</output></div>
-              <div class="spill-detection"><i id="spillColorIndicator" aria-hidden="true"></i><span id="spillColorLabel">自动检测背景主色</span><div><button id="spillAutoBtn" class="active" type="button">自动</button><button id="spillPickBtn" type="button">主色取样</button><button id="spillAddBtn" type="button">＋ 加选</button></div></div>
-              <div class="spill-region-control"><span><strong>局部抠色</strong><small id="spillRegionStatus">先框选区域，再吸取框内颜色</small></span><div><button id="spillRegionBtn" type="button">框选区域</button><button id="spillRegionClearBtn" type="button" disabled>清除</button></div></div>
               <div class="mask-refine">
                 <div class="mask-refine-heading"><span><strong>遮罩修补</strong><small id="maskRefineStatus">直接在左侧画面涂抹</small></span><button id="maskClearBtn" type="button" disabled>清除</button></div>
                 <div class="mask-refine-actions" role="group" aria-label="遮罩修补方式"><button id="maskAddBtn" type="button"><i>＋</i>加选主体</button><button id="maskSubtractBtn" type="button"><i>−</i>减去背景</button></div>
@@ -114,7 +111,20 @@
               </div>
               <div class="transparency-lock"><span class="transparency-swatch" aria-hidden="true"></span><div><strong>透明背景 PNG</strong><small>背景将写入 Alpha 通道，不会填充颜色</small></div><b>自动</b></div>
             </div>
-            <p class="editor-hint">整片背景可用“主色取样”；只想处理一小块时，先点“框选区域”，再在框内吸取目标颜色。</p>
+            <p class="editor-hint">适合自动提取完整人物与毛发；如只需移除某块颜色，请使用下方“局部抠色”。</p>
+          </section>
+
+          <section class="inspector-section matting-section local-key-section">
+            <div class="inspector-title"><span><strong>局部抠色</strong><b class="pro-badge">HAIR</b></span><label class="switch"><input id="localKeyToggle" type="checkbox" /><span></span></label></div>
+            <div id="localKeyControls" class="matting-controls off">
+              <div class="model-card local-key-card"><span class="model-orb" aria-hidden="true"></span><div><strong>毛发边缘保护</strong><small>只移除框选区域中的目标颜色</small></div></div>
+              <div class="editor-range-row"><label for="localHairDetail">毛发细节</label><input id="localHairDetail" class="range" type="range" min="0" max="100" value="78" /><output id="localHairDetailValue">78</output></div>
+              <div class="editor-range-row"><label for="despill">抠色强度</label><input id="despill" class="range" type="range" min="0" max="100" value="68" /><output id="despillValue">68</output></div>
+              <div class="spill-region-control"><span><strong>第一步 · 框选区域</strong><small id="spillRegionStatus">先在左侧框出需要处理的范围</small></span><div><button id="spillRegionBtn" type="button">框选区域</button><button id="spillRegionClearBtn" type="button" disabled>清除</button></div></div>
+              <div class="spill-detection"><i id="spillColorIndicator" aria-hidden="true"></i><span id="spillColorLabel">等待吸取框内颜色</span><div><button id="spillAutoBtn" type="button">清空色键</button><button id="spillPickBtn" type="button">吸取颜色</button><button id="spillAddBtn" type="button">＋ 加选</button></div></div>
+              <div class="transparency-lock"><span class="transparency-swatch" aria-hidden="true"></span><div><strong>透明背景 PNG</strong><small>框外画面保持原样，毛发边缘渐进透明</small></div><b>自动</b></div>
+            </div>
+            <p class="editor-hint">开启后先框选，再在框内吸取要移除的颜色；无需开启 AI 全图抠像。</p>
           </section>
 
           <section class="control-section sprite-control-section">
@@ -164,6 +174,6 @@
 
     <footer><span>SPRITEEE · VIDEO TO SPRITE</span><span>一个画布，一条完整工作流</span></footer>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260929b"></script><script src="./editor.js?v=20260929"></script>
+    <script src="./vendor/jpeg-encoder.js?v=20260902"></script><script src="./app.js?v=20260929c"></script><script src="./editor.js?v=20260929b"></script>
   </body>
 </html>

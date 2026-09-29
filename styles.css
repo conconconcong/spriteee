@@ -449,6 +449,10 @@ footer { width: min(1220px, calc(100% - 48px)); min-height: 68px; display: flex;
 .pro-badge { padding: 2px 5px; border-radius: 4px; background: linear-gradient(90deg,#0071e3,#5e5ce6); color: white; font-size: 7px; letter-spacing: .05em; }
 .matting-controls { transition: opacity .2s; }
 .matting-controls.off { opacity: .34; pointer-events: none; }
+.local-key-section { background: linear-gradient(180deg,rgba(245,251,247,.72),rgba(255,255,255,0)); }
+.local-key-section .pro-badge { color: #248a3d; background: rgba(52,199,89,.11); }
+.local-key-card { background: #eef9f1 !important; }
+.local-key-card .model-orb { background: radial-gradient(circle at 34% 30%,#d6ffe1 0 18%,#34c759 38%,#1f8f3a 100%); box-shadow: 0 0 0 4px rgba(52,199,89,.09),0 4px 12px rgba(36,138,61,.22); }
 .model-card { display: flex; align-items: center; gap: 10px; padding: 11px; border-radius: 12px; background: #f5f5f7; }
 .model-orb { flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%; background: radial-gradient(circle at 35% 30%,#c7f0ff,#0071e3 55%,#5e5ce6); box-shadow: inset -3px -4px 8px rgba(0,0,0,.15); }
 .model-card > div { display: grid; gap: 3px; }

@@ -350,7 +350,7 @@ function updateUI({ dirty = false } = {}) {
   els.countControl.hidden = state.mode !== "count";
   els.fpsControl.hidden = state.mode !== "fps";
   els.compressionHint.textContent = state.transparentPNG
-    ? "抠像需要透明通道，只能使用 PNG；JPG 不支持透明背景"
+    ? "AI 抠像或局部抠色需要透明通道，只能使用 PNG；JPG 不支持透明背景"
     : isWideDelivery && deliveryFormat === "image/jpeg" && state.format === "image/webp"
       ? "超大画布 WebP 将自动改用 JPG；完整尺寸不变，压缩效果更明显"
       : isWideDelivery && deliveryFormat === "image/png" && state.format !== "image/png"
@@ -602,7 +602,8 @@ function applyEditorTimeline({ resetTrim = false } = {}) {
   if (state.aspectLocked) state.frameHeight = frameHeight();
   const summary = bridge.getSummary();
   els.fileMeta.textContent = `编辑结果 · ${summary.ratio} · ${duration.toFixed(1)} 秒`;
-  els.spriteSyncSummary.textContent = `${summary.ratio} · ${summary.speed} · ${summary.direction}${summary.matting ? " · AI 抠像" : ""}`;
+  const transparencyTools = [summary.matting ? "AI 抠像" : "", summary.localKeying ? "局部抠色" : ""].filter(Boolean);
+  els.spriteSyncSummary.textContent = `${summary.ratio} · ${summary.speed} · ${summary.direction}${transparencyTools.length ? ` · ${transparencyTools.join(" + ")}` : ""}`;
   updateUI({ dirty: true });
 }
 
@@ -1161,7 +1162,8 @@ async function encodeIndexedPNG(source, maxColors = 256) {
 async function generateSprite() {
   if (!state.file || state.isProcessing || state.isCompressing) return;
   state.importedSpriteFile = null;
-  if (window.SPRITEEE_EDITOR?.getSummary?.().matting) state.transparentPNG = true;
+  const editorTransparency = window.SPRITEEE_EDITOR?.getSummary?.();
+  if (editorTransparency?.matting || editorTransparency?.localKeying) state.transparentPNG = true;
   if (state.transparentPNG) state.format = "image/png";
   const frameCount = selectedFrameCount();
   const grid = spriteGrid(frameCount);
@@ -1227,7 +1229,9 @@ async function generateSprite() {
 
   try {
     const bridge = editorBridge();
-    if (bridge?.getSummary?.().matting) els.processingText.textContent = "正在准备 AI 毛发抠像模型";
+    const bridgeSummary = bridge?.getSummary?.();
+    if (bridgeSummary?.matting) els.processingText.textContent = "正在准备 AI 毛发抠像模型";
+    else if (bridgeSummary?.localKeying) els.processingText.textContent = "正在应用局部毛发抠色";
     const clipStart = clamp(state.trimStart, 0, state.duration);
     const safeVideoEnd = bridge
       ? state.duration

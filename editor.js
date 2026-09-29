@@ -59,6 +59,8 @@
     reverseToggle: q("#reverseToggle"),
     mattingToggle: q("#mattingToggle"),
     mattingControls: q("#mattingControls"),
+    localKeyToggle: q("#localKeyToggle"),
+    localKeyControls: q("#localKeyControls"),
     modelStatus: q("#modelStatus"),
     hairDetail: q("#hairDetail"),
     hairDetailValue: q("#hairDetailValue"),
@@ -66,6 +68,8 @@
     edgeFeatherValue: q("#edgeFeatherValue"),
     despill: q("#despill"),
     despillValue: q("#despillValue"),
+    localHairDetail: q("#localHairDetail"),
+    localHairDetailValue: q("#localHairDetailValue"),
     spillColorIndicator: q("#spillColorIndicator"),
     spillColorLabel: q("#spillColorLabel"),
     spillAutoBtn: q("#spillAutoBtn"),
@@ -108,7 +112,9 @@
     speed: 1,
     reverse: false,
     matting: false,
+    localKeying: false,
     hairDetail: 0.78,
+    localHairDetail: 0.78,
     feather: 0.32,
     despill: 0.68,
     background: "transparent",
@@ -135,7 +141,6 @@
     lastMaskVideoTime: -1,
     combinedMask: null,
     spillColor: null,
-    spillMisses: 0,
     spillColorLocked: false,
     pickingSpillColor: false,
     spillPickMode: null,
@@ -158,8 +163,6 @@
   const layerCanvas = document.createElement("canvas");
   const maskCanvas = document.createElement("canvas");
   const maskFrameCanvas = document.createElement("canvas");
-  const spillSampleCanvas = document.createElement("canvas");
-  const spillMaskCanvas = document.createElement("canvas");
   const spillPixelCanvas = document.createElement("canvas");
 
   function clamp(value, min, max) {
@@ -264,8 +267,19 @@
       speed: `${state.speed}×`,
       direction: state.reverse ? "倒放" : "正放",
       matting: state.matting,
+      localKeying: state.localKeying,
       layout: state.layout,
     };
+  }
+
+  function signalTransparencyMode() {
+    window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
+      detail: {
+        enabled: state.matting || state.localKeying,
+        matting: state.matting,
+        localKeying: state.localKeying,
+      },
+    }));
   }
 
   function signalEditorChange() {
@@ -284,7 +298,9 @@
   function resetSpriteMatting() {
     Object.assign(state, {
       matting: defaults.matting,
+      localKeying: defaults.localKeying,
       hairDetail: defaults.hairDetail,
+      localHairDetail: defaults.localHairDetail,
       feather: defaults.feather,
       despill: defaults.despill,
       background: defaults.background,
@@ -303,9 +319,7 @@
       manualMaskStrokes: [],
       lastMaskVideoTime: -1,
     });
-    window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
-      detail: { enabled: false },
-    }));
+    signalTransparencyMode();
     updateUI();
     signalEditorChange();
   }
@@ -492,118 +506,14 @@
     return "洋红色";
   }
 
-  function estimateSpillColor(source) {
-    if (!source || !state.combinedMask) return null;
-    const width = 96;
-    const height = 96;
-    spillSampleCanvas.width = width;
-    spillSampleCanvas.height = height;
-    spillMaskCanvas.width = width;
-    spillMaskCanvas.height = height;
-    const sampleContext = spillSampleCanvas.getContext("2d", { willReadFrequently: true });
-    const maskContext = spillMaskCanvas.getContext("2d", { willReadFrequently: true });
-    sampleContext.clearRect(0, 0, width, height);
-    maskContext.clearRect(0, 0, width, height);
-    sampleContext.drawImage(source, 0, 0, width, height);
-    maskContext.drawImage(state.combinedMask, 0, 0, width, height);
-    const pixels = sampleContext.getImageData(0, 0, width, height).data;
-    const masks = maskContext.getImageData(0, 0, width, height).data;
-    const binCount = 24;
-    const bins = Array.from({ length: binCount }, () => ({ weight: 0, r: 0, g: 0, b: 0 }));
-    let totalWeight = 0;
-    let backgroundSamples = 0;
-
-    for (let index = 0; index < pixels.length; index += 4) {
-      const maskAlpha = masks[index + 3] / 255;
-      if (maskAlpha > 0.16) continue;
-      const red = pixels[index];
-      const green = pixels[index + 1];
-      const blue = pixels[index + 2];
-      const max = Math.max(red, green, blue);
-      const min = Math.min(red, green, blue);
-      const saturation = max ? (max - min) / max : 0;
-      if (saturation < 0.2 || max < 34) continue;
-      const hue = hueFromRGB(red, green, blue);
-      const binIndex = Math.floor(hue / (360 / binCount)) % binCount;
-      const weight = saturation * saturation * (0.35 + max / 255) * (1 - maskAlpha);
-      const bin = bins[binIndex];
-      bin.weight += weight;
-      bin.r += red * weight;
-      bin.g += green * weight;
-      bin.b += blue * weight;
-      totalWeight += weight;
-      backgroundSamples += 1;
-    }
-
-    if (backgroundSamples < 24 || totalWeight < 8) return null;
-    let dominantIndex = 0;
-    let dominantScore = -1;
-    for (let index = 0; index < binCount; index += 1) {
-      const previous = bins[(index - 1 + binCount) % binCount].weight;
-      const next = bins[(index + 1) % binCount].weight;
-      const score = bins[index].weight + previous * 0.58 + next * 0.58;
-      if (score > dominantScore) {
-        dominantScore = score;
-        dominantIndex = index;
-      }
-    }
-
-    let weight = 0;
-    let red = 0;
-    let green = 0;
-    let blue = 0;
-    for (const offset of [-1, 0, 1]) {
-      const bin = bins[(dominantIndex + offset + binCount) % binCount];
-      const multiplier = offset === 0 ? 1 : 0.58;
-      weight += bin.weight * multiplier;
-      red += bin.r * multiplier;
-      green += bin.g * multiplier;
-      blue += bin.b * multiplier;
-    }
-    if (!weight || dominantScore / totalWeight < 0.16) return null;
-    const color = { red: red / weight, green: green / weight, blue: blue / weight };
-    const hue = hueFromRGB(color.red, color.green, color.blue);
-    return {
-      ...color,
-      hue,
-      name: spillColorName(hue),
-      confidence: clamp(dominantScore / totalWeight, 0, 1),
-    };
-  }
-
-  function stabilizeSpillColor(next) {
-    const previous = state.spillColor;
-    if (!next) {
-      state.spillMisses += 1;
-      return state.spillMisses <= 4 ? previous : null;
-    }
-    state.spillMisses = 0;
-    if (!previous) return next;
-    const hueDistance = Math.min(Math.abs(previous.hue - next.hue), 360 - Math.abs(previous.hue - next.hue));
-    if (hueDistance > 52) return next;
-    const previousWeight = 0.72;
-    const nextWeight = 1 - previousWeight;
-    const red = previous.red * previousWeight + next.red * nextWeight;
-    const green = previous.green * previousWeight + next.green * nextWeight;
-    const blue = previous.blue * previousWeight + next.blue * nextWeight;
-    const hue = hueFromRGB(red, green, blue);
-    return {
-      red,
-      green,
-      blue,
-      hue,
-      name: spillColorName(hue),
-      confidence: previous.confidence * previousWeight + next.confidence * nextWeight,
-    };
-  }
-
   function applyDespill(canvas) {
     const spill = state.spillColor;
-    if (state.despill <= 0 || !spill) return;
+    if (!state.localKeying || state.despill <= 0 || !spill || !state.spillRegion) return;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = image.data;
     const amount = state.despill;
+    const hairDetail = state.localHairDetail;
     const selectedColors = state.spillColorLocked && state.manualSpillColors.length
       ? state.manualSpillColors
       : [spill];
@@ -664,11 +574,12 @@
           const hueCosine = pixelChromaLength > 1
             ? chromaDot / Math.sqrt(candidate.chromaLength * pixelChromaLength)
             : 0;
-          const hueMatchRaw = clamp((hueCosine - 0.56) / 0.4, 0, 1);
+          const hueFloor = 0.53 + hairDetail * 0.09;
+          const hueMatchRaw = clamp((hueCosine - hueFloor) / (0.96 - hueFloor), 0, 1);
           const hueMatch = hueMatchRaw * hueMatchRaw * (3 - 2 * hueMatchRaw);
           const relativeChroma = Math.sqrt(pixelChromaLength / candidate.chromaLength);
           const chromaMatch = clamp((relativeChroma - 0.07) / 0.72, 0, 1);
-          const projectionFloor = candidate.color.manual ? 0.07 : 0.13;
+          const projectionFloor = candidate.color.manual ? 0.045 + hairDetail * 0.055 : 0.13;
           const projectionRaw = clamp((projection - projectionFloor) / (0.92 - projectionFloor), 0, 1);
           const projectionMatch = projectionRaw * projectionRaw * (3 - 2 * projectionRaw);
           const keySimilarity = hueMatch * chromaMatch * projectionMatch;
@@ -706,9 +617,10 @@
         data[index] = clamp(Math.round(cleanRed), 0, 255);
         data[index + 1] = clamp(Math.round(cleanGreen), 0, 255);
         data[index + 2] = clamp(Math.round(cleanBlue), 0, 255);
+        const detailSimilarity = Math.pow(keySimilarity, 0.78 + hairDetail * 0.72);
         const keyStrength = 1 - Math.pow(1 - amount, matchedSpill.manual ? 2.35 : 1.8);
         const interiorGate = matchedSpill.manual ? 1 : clamp(0.24 + edgeWeight * 1.8, 0.24, 1);
-        const keyAlphaRemoval = keySimilarity * keyStrength * interiorGate;
+        const keyAlphaRemoval = detailSimilarity * keyStrength * interiorGate;
         const fringeAlphaRemoval = opacity < 0.82
           ? amount * (1 - opacity) * similarity * 0.42
           : 0;
@@ -720,28 +632,34 @@
   }
 
   function drawPrimary(ctx, rect, useMatting = false, applyPrimaryCrop = true) {
-    if (!useMatting || !state.matting || !state.combinedMask) {
+    const useAIMatting = useMatting && state.matting && state.combinedMask;
+    const useLocalKeying = useMatting && state.localKeying && state.spillColor && state.spillRegion;
+    if (!useAIMatting && !useLocalKeying) {
       drawMedia(ctx, el.video, rect, applyPrimaryCrop);
-      return;
-    }
-    drawBackground(ctx, rect);
-    const subject = prepareSubject();
-    if (!subject) {
-      drawMedia(ctx, el.video, rect, true);
       return;
     }
     const layerContext = layerCanvas.getContext("2d", { willReadFrequently: true });
     layerContext.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
-    const crop = applyPrimaryCrop
-      ? sourceCropRect(subject, rect.width / rect.height)
-      : { sx: 0, sy: 0, sw: subject.width, sh: subject.height };
-    layerContext.drawImage(subject, crop.sx, crop.sy, crop.sw, crop.sh, rect.x, rect.y, rect.width, rect.height);
-    applyDespill(layerCanvas);
+    if (useAIMatting) {
+      drawBackground(ctx, rect);
+      const subject = prepareSubject();
+      if (!subject) {
+        drawMedia(ctx, el.video, rect, applyPrimaryCrop);
+        return;
+      }
+      const crop = applyPrimaryCrop
+        ? sourceCropRect(subject, rect.width / rect.height)
+        : { sx: 0, sy: 0, sw: subject.width, sh: subject.height };
+      layerContext.drawImage(subject, crop.sx, crop.sy, crop.sw, crop.sh, rect.x, rect.y, rect.width, rect.height);
+    } else {
+      drawMedia(layerContext, el.video, rect, applyPrimaryCrop);
+    }
+    if (useLocalKeying) applyDespill(layerCanvas);
     ctx.drawImage(layerCanvas, 0, 0);
   }
 
   function renderEditorFrame({
-    useMatting = state.matting,
+    useMatting = state.matting || state.localKeying,
     showCropSource = !state.bridgeRendering && !state.exporting,
   } = {}) {
     if (!state.file || el.video.readyState < 2) return;
@@ -793,12 +711,14 @@
     el.trimEnd.disabled = !hasVideo;
     el.reverseToggle.checked = state.reverse;
     el.mattingToggle.checked = state.matting;
+    el.localKeyToggle.checked = state.localKeying;
     el.mattingControls.classList.toggle("off", !state.matting);
-    el.aiBadge.hidden = !state.matting;
+    el.localKeyControls.classList.toggle("off", !state.localKeying);
+    el.aiBadge.hidden = !state.matting && !state.localKeying;
     el.canvas.hidden = showSprite;
     el.spriteCanvas.hidden = !showSprite;
     el.stage.classList.toggle("sprite-mode", showSprite);
-    el.stage.classList.toggle("matting-preview", state.matting && !showSprite);
+    el.stage.classList.toggle("matting-preview", (state.matting || state.localKeying) && !showSprite);
     el.stage.classList.toggle("color-picking", state.pickingSpillColor && !showSprite);
     el.stage.classList.toggle("mask-brushing", Boolean(state.maskBrushMode) && !showSprite);
     el.stage.classList.toggle("region-selecting", state.selectingSpillRegion && !showSprite);
@@ -822,9 +742,11 @@
     el.previewScale.textContent = showSprite ? state.spriteLabel : "VIDEO PREVIEW";
     const aiBadgeLabel = el.aiBadge.querySelector("span");
     if (aiBadgeLabel) {
-      aiBadgeLabel.textContent = state.segmentersReady && state.combinedMask
-        ? "AI 抠像实时预览"
-        : "正在准备 AI 抠像";
+      aiBadgeLabel.textContent = state.matting
+        ? state.segmentersReady && state.combinedMask
+          ? state.localKeying ? "AI 抠像 + 局部抠色" : "AI 抠像实时预览"
+          : "正在准备 AI 抠像"
+        : "局部抠色实时预览";
     }
     el.cropZoom.value = Math.round(state.cropZoom * 100);
     el.cropX.value = Math.round(state.cropX * 100);
@@ -839,9 +761,11 @@
     el.hairDetail.value = Math.round(state.hairDetail * 100);
     el.edgeFeather.value = Math.round(state.feather * 100);
     el.despill.value = Math.round(state.despill * 100);
+    el.localHairDetail.value = Math.round(state.localHairDetail * 100);
     el.hairDetailValue.textContent = Math.round(state.hairDetail * 100);
     el.edgeFeatherValue.textContent = Math.round(state.feather * 100);
     el.despillValue.textContent = Math.round(state.despill * 100);
+    el.localHairDetailValue.textContent = Math.round(state.localHairDetail * 100);
     if (state.spillColor) {
       const { red, green, blue, name } = state.spillColor;
       const selectedColors = state.spillColorLocked && state.manualSpillColors.length
@@ -853,20 +777,20 @@
       el.spillColorIndicator.classList.add("detected");
       el.spillColorLabel.textContent = state.spillColorLocked
         ? state.manualSpillColors.length > 1
-          ? `已加选 ${state.manualSpillColors.length} 个背景色键`
-          : `已锁定${name}色键 · 可继续加选`
-        : `已识别${name}背景 · 自适应净边`;
+          ? `已加选 ${state.manualSpillColors.length} 个局部色键`
+          : `已锁定${name}色键 · 毛发边缘保护中`
+        : `已识别${name}色键`;
     } else {
       el.spillColorIndicator.style.background = "";
       el.spillColorIndicator.classList.remove("detected");
-      el.spillColorLabel.textContent = state.matting ? "正在分析背景主色" : "自动检测背景主色";
+      el.spillColorLabel.textContent = "等待吸取框内颜色";
     }
     el.spillAutoBtn.classList.toggle("active", !state.spillColorLocked && !state.pickingSpillColor);
     el.spillPickBtn.classList.toggle("active", state.spillPickMode === "replace" || (state.spillColorLocked && !state.pickingSpillColor));
     el.spillAddBtn.classList.toggle("active", state.spillPickMode === "add");
     el.spillPickBtn.textContent = state.spillPickMode === "replace"
       ? "点击主背景"
-      : state.spillColorLocked ? "重取主色" : "主色取样";
+      : state.spillColorLocked ? "重新吸取" : "吸取颜色";
     el.spillAddBtn.textContent = state.spillPickMode === "add" ? "点击补充色" : "＋ 加选";
     el.spillRegionBtn.classList.toggle("active", state.selectingSpillRegion || state.spillPickMode === "region");
     el.spillRegionBtn.textContent = state.selectingSpillRegion ? "拖动框选中" : state.spillRegion ? "重新框选" : "框选区域";
@@ -875,7 +799,7 @@
       ? "在左侧画面拖出作用范围"
       : state.spillRegion
         ? state.pickingSpillColor ? "区域已锁定，请点击框内目标颜色" : "色键只作用于蓝色框内"
-        : "先框选区域，再吸取框内颜色";
+        : "先在左侧框出需要处理的范围";
     el.maskAddBtn.classList.toggle("active", state.maskBrushMode === "add");
     el.maskSubtractBtn.classList.toggle("active", state.maskBrushMode === "subtract");
     el.maskClearBtn.disabled = state.manualMaskStrokes.length === 0;
@@ -904,7 +828,7 @@
     const endPercent = state.duration ? state.trimEnd / state.duration * 100 : 100;
     el.trimSelection.style.setProperty("--editor-trim-start", `${startPercent}%`);
     el.trimSelection.style.setProperty("--editor-trim-end", `${endPercent}%`);
-    [el.cropZoom, el.cropX, el.cropY, el.hairDetail, el.edgeFeather, el.despill, el.maskBrushSize].forEach(setRangeProgress);
+    [el.cropZoom, el.cropX, el.cropY, el.hairDetail, el.edgeFeather, el.localHairDetail, el.despill, el.maskBrushSize].forEach(setRangeProgress);
 
     qa(".crop-presets button").forEach((button) => button.classList.toggle("active", button.dataset.ratio === state.ratio));
     qa(".layout-grid button").forEach((button) => button.classList.toggle("active", button.dataset.layout === state.layout));
@@ -1164,9 +1088,6 @@
         }
         applyManualMaskStrokes(maskContext, width, height);
         state.combinedMask = maskCanvas;
-        if (!state.spillColorLocked) {
-          state.spillColor = stabilizeSpillColor(estimateSpillColor(maskFrameCanvas.width ? maskFrameCanvas : el.video));
-        }
         state.lastMaskVideoTime = videoTime;
         updated = true;
         if (!state.bridgeRendering && !state.exporting && state.previewMode === "video") {
@@ -1233,7 +1154,7 @@
         if (Math.abs(el.secondaryVideo.currentTime - secondaryTime) > 0.2) el.secondaryVideo.currentTime = secondaryTime;
       }
       if (state.matting) updateAIMask();
-      else renderEditorFrame({ useMatting: false });
+      else renderEditorFrame({ useMatting: state.localKeying });
       el.currentTime.textContent = formatTime(el.video.currentTime);
       el.scrubber.value = el.video.currentTime;
     }
@@ -1444,7 +1365,7 @@
       canvasX < previewRect.x || canvasX > previewRect.x + previewRect.width
       || canvasY < previewRect.y || canvasY > previewRect.y + previewRect.height
     ) return null;
-    const source = maskFrameCanvas.width && maskFrameCanvas.height ? maskFrameCanvas : el.video;
+    const source = state.matting && maskFrameCanvas.width && maskFrameCanvas.height ? maskFrameCanvas : el.video;
     const sourceWidth = source.videoWidth || source.naturalWidth || source.width || 1;
     const sourceHeight = source.videoHeight || source.naturalHeight || source.height || 1;
     const viewAspect = previewRect.width / previewRect.height;
@@ -1478,7 +1399,7 @@
 
   function updateSpillRegionGuide() {
     const region = state.spillRegionDraft || state.spillRegion;
-    const show = Boolean(region && state.file && state.previewMode === "video");
+    const show = Boolean(region && state.localKeying && state.file && state.previewMode === "video");
     el.spillRegionGuide.hidden = !show;
     if (!show) return;
     const canvasBounds = el.canvas.getBoundingClientRect();
@@ -2031,8 +1952,12 @@
     signalEditorChange();
   });
   function toggleSpillPicker(mode) {
-    if (!state.file || !state.matting) {
-      notify("请先添加视频并开启 AI 抠像");
+    if (!state.file || !state.localKeying) {
+      notify("请先添加视频并开启局部抠色");
+      return;
+    }
+    if (!state.spillRegion) {
+      notify("请先框选需要处理的区域");
       return;
     }
     const cancel = state.pickingSpillColor && state.spillPickMode === mode;
@@ -2052,8 +1977,8 @@
   el.spillPickBtn.addEventListener("click", () => toggleSpillPicker("replace"));
   el.spillAddBtn.addEventListener("click", () => toggleSpillPicker("add"));
   el.spillRegionBtn.addEventListener("click", () => {
-    if (!state.file || !state.matting) {
-      notify("请先添加视频并开启 AI 抠像");
+    if (!state.file || !state.localKeying) {
+      notify("请先添加视频并开启局部抠色");
       return;
     }
     const cancel = state.selectingSpillRegion;
@@ -2076,14 +2001,12 @@
     state.spillColorLocked = false;
     state.spillColor = null;
     state.manualSpillColors = [];
-    state.spillMisses = 0;
     state.lastMaskVideoTime = -1;
     invalidateSpritePreview();
-    if (state.matting && state.segmentersReady) updateAIMask(true);
     updateUI();
     renderEditorFrame();
     signalEditorChange();
-    notify("局部抠色已清除，恢复自动识别");
+    notify("局部抠色区域和色键已清除");
   });
   el.spillAutoBtn.addEventListener("click", () => {
     state.pickingSpillColor = false;
@@ -2091,16 +2014,12 @@
     state.spillColorLocked = false;
     state.spillColor = null;
     state.manualSpillColors = [];
-    state.spillRegion = null;
-    state.spillRegionDraft = null;
-    state.selectingSpillRegion = false;
-    state.spillMisses = 0;
     state.lastMaskVideoTime = -1;
-    if (state.matting && state.segmentersReady) updateAIMask(true);
+    invalidateSpritePreview();
     updateUI();
     renderEditorFrame();
     signalEditorChange();
-    notify("已恢复自动背景色识别");
+    notify("色键已清空，可在当前框选区域重新吸取");
   });
 
   function setMaskBrushMode(mode) {
@@ -2206,6 +2125,7 @@
   });
   bindEditorRange(el.hairDetail, el.hairDetailValue, (value) => { state.hairDetail = value / 100; }, { refreshMask: true });
   bindEditorRange(el.edgeFeather, el.edgeFeatherValue, (value) => { state.feather = value / 100; });
+  bindEditorRange(el.localHairDetail, el.localHairDetailValue, (value) => { state.localHairDetail = value / 100; });
   bindEditorRange(el.despill, el.despillValue, (value) => { state.despill = value / 100; });
 
   el.reverseToggle.addEventListener("change", (event) => {
@@ -2221,19 +2141,10 @@
     state.matting = event.target.checked;
     if (!state.matting) {
       state.combinedMask = null;
-      state.spillColor = null;
-      state.spillColorLocked = false;
-      state.pickingSpillColor = false;
-      state.spillPickMode = null;
-      state.manualSpillColors = [];
-      state.spillRegion = null;
-      state.spillRegionDraft = null;
-      state.selectingSpillRegion = false;
       state.maskBrushMode = null;
+      state.manualMaskStrokes = [];
       state.lastMaskVideoTime = -1;
-      window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
-        detail: { enabled: false },
-      }));
+      signalTransparencyMode();
       updateUI();
       renderEditorFrame();
       signalEditorChange();
@@ -2242,27 +2153,15 @@
     if (!state.file) {
       notify("请先添加视频");
       state.matting = false;
-      window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
-        detail: { enabled: false },
-      }));
+      signalTransparencyMode();
       updateUI();
       return;
     }
     state.background = "transparent";
     state.combinedMask = null;
-    state.spillColor = null;
-    state.spillColorLocked = false;
-    state.pickingSpillColor = false;
-    state.spillPickMode = null;
-    state.manualSpillColors = [];
-    state.spillRegion = null;
-    state.spillRegionDraft = null;
-    state.selectingSpillRegion = false;
     state.maskBrushMode = null;
     state.lastMaskVideoTime = -1;
-    window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
-      detail: { enabled: true },
-    }));
+    signalTransparencyMode();
     updateUI();
     el.modelStatus.textContent = state.segmentersReady ? "双模型已就绪 · 正在抠像" : "正在下载人像与毛发模型…";
     signalEditorChange();
@@ -2278,25 +2177,36 @@
       console.error(error);
       state.matting = false;
       state.combinedMask = null;
-      state.spillColor = null;
-      state.spillColorLocked = false;
-      state.pickingSpillColor = false;
-      state.spillPickMode = null;
-      state.manualSpillColors = [];
-      state.spillRegion = null;
-      state.spillRegionDraft = null;
-      state.selectingSpillRegion = false;
       state.maskBrushMode = null;
       state.lastMaskVideoTime = -1;
       el.modelStatus.textContent = "模型加载失败，请检查网络后重试";
-      window.dispatchEvent(new CustomEvent("spriteeee:matting-mode", {
-        detail: { enabled: false },
-      }));
+      signalTransparencyMode();
       updateUI();
-      renderEditorFrame({ useMatting: false });
+      renderEditorFrame();
       signalEditorChange();
       notify("AI 模型加载失败，请检查网络后重试");
     }
+  });
+  el.localKeyToggle.addEventListener("change", (event) => {
+    state.localKeying = event.target.checked;
+    if (state.localKeying && !state.file) {
+      state.localKeying = false;
+      notify("请先添加视频");
+      updateUI();
+      return;
+    }
+    state.pickingSpillColor = false;
+    state.spillPickMode = null;
+    state.selectingSpillRegion = false;
+    state.spillRegionDraft = null;
+    invalidateSpritePreview();
+    signalTransparencyMode();
+    updateUI();
+    renderEditorFrame();
+    signalEditorChange();
+    notify(state.localKeying
+      ? state.spillRegion && state.spillColor ? "局部抠色已开启" : "局部抠色已开启，请先框选需要处理的区域"
+      : "局部抠色已关闭，框选与色键已保留");
   });
   el.exportBtn.addEventListener("click", exportVideo);
   el.syncBtn.addEventListener("click", () => {
